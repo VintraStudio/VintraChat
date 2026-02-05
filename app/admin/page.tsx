@@ -145,13 +145,24 @@ export default function AdminDashboard() {
   // Also subscribe to realtime for instant updates
   useEffect(() => {
     const supabase = createClient()
-    const channel = supabase
-      .channel('dashboard-updates')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_sessions' }, () => loadDashboard())
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages' }, () => loadDashboard())
-      .subscribe()
+    let channel: ReturnType<typeof supabase.channel> | null = null
 
-    return () => { supabase.removeChannel(channel) }
+    async function setup() {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+
+      channel = supabase
+        .channel(`dashboard-updates-${user.id}`)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_sessions', filter: `admin_id=eq.${user.id}` }, () => loadDashboard())
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'chat_messages', filter: `admin_id=eq.${user.id}` }, () => loadDashboard())
+        .subscribe()
+    }
+
+    setup()
+
+    return () => {
+      if (channel) supabase.removeChannel(channel)
+    }
   }, [loadDashboard])
 
   if (loading || !stats) {

@@ -32,7 +32,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import type { RealtimeChannel } from '@supabase/supabase-js'
 
 interface ChatSession {
   id: string
@@ -61,26 +60,25 @@ export default function ConversationsPage() {
   const [isConnected, setIsConnected] = useState(false)
   const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('all')
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const channelRef = useRef<RealtimeChannel | null>(null)
   const userIdRef = useRef<string | null>(null)
+  const supabaseRef = useRef(createClient())
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const lastFetchRef = useRef<string>('')
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Derive selectedSession from sessions + selectedSessionId (no stale closure)
   const selectedSession = sessions.find(s => s.id === selectedSessionId) || null
 
-  // Stable data fetcher that doesn't depend on any state
-  const fetchSessions = useCallback(async () => {
+  const fetchSessions = useCallback(async (): Promise<ChatSession[]> => {
+    const supabase = supabaseRef.current
     if (!userIdRef.current) {
-      const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return []
       userIdRef.current = user.id
     }
 
-    const supabase = createClient()
     const { data } = await supabase
       .from('chat_sessions')
       .select(`
@@ -110,16 +108,27 @@ export default function ConversationsPage() {
     }))
   }, [])
 
+  // Refresh sessions and update state, with dedup to avoid double-fetches
   const refreshSessions = useCallback(async () => {
+    const now = Date.now().toString()
+    lastFetchRef.current = now
     const data = await fetchSessions()
-    setSessions(data)
+    // Only update if this is still the latest fetch
+    if (lastFetchRef.current === now) {
+      setSessions(data)
+    }
     return data
   }, [fetchSessions])
 
-  // Initial load
+  // Initial load + auth
   useEffect(() => {
     let mounted = true
     async function init() {
+      const supabase = supabaseRef.current
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user || !mounted) return
+      userIdRef.current = user.id
+
       const data = await fetchSessions()
       if (!mounted) return
       setSessions(data)
@@ -132,54 +141,58 @@ export default function ConversationsPage() {
     return () => { mounted = false }
   }, [fetchSessions])
 
-  // Realtime subscription -- stable, no dependency on sessions/selectedSession
+  // Realtime subscription + polling fallback
   useEffect(() => {
-    const supabase = createClient()
-    
-    const setupRealtime = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      userIdRef.current = user.id
+    if (!userIdRef.current) return
+    const supabase = supabaseRef.current
+    const userId = userIdRef.current
 
-      const channel = supabase
-        .channel('admin-chat-updates')
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'chat_messages' },
-          () => {
-            refreshSessions().then(() => {
-              setTimeout(scrollToBottom, 100)
-            })
-          }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'INSERT', schema: 'public', table: 'chat_sessions' },
-          () => { refreshSessions() }
-        )
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'chat_sessions' },
-          () => { refreshSessions() }
-        )
-        .subscribe((status) => {
-          setIsConnected(status === 'SUBSCRIBED')
-        })
+    // Subscribe to realtime with admin_id filter
+    const channel = supabase
+      .channel(`admin-conversations-${userId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'chat_messages',
+          filter: `admin_id=eq.${userId}`,
+        },
+        () => {
+          refreshSessions().then(() => setTimeout(scrollToBottom, 100))
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'chat_sessions',
+          filter: `admin_id=eq.${userId}`,
+        },
+        () => {
+          refreshSessions()
+        }
+      )
+      .subscribe((status) => {
+        setIsConnected(status === 'SUBSCRIBED')
+      })
 
-      channelRef.current = channel
-    }
-
-    setupRealtime()
+    // Polling fallback every 3 seconds in case realtime events are missed
+    pollRef.current = setInterval(() => {
+      refreshSessions()
+    }, 3000)
 
     return () => {
-      if (channelRef.current) {
-        supabase.removeChannel(channelRef.current)
-        channelRef.current = null
+      supabase.removeChannel(channel)
+      if (pollRef.current) {
+        clearInterval(pollRef.current)
+        pollRef.current = null
       }
     }
-  }, [refreshSessions])
+  }, [loading, refreshSessions])
 
-  // Scroll to bottom when selected session messages change
+  // Scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom()
   }, [selectedSession?.chat_messages?.length])
@@ -188,13 +201,12 @@ export default function ConversationsPage() {
     if (!newMessage.trim() || !selectedSession) return
     setSending(true)
 
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+    const supabase = supabaseRef.current
+    if (!userIdRef.current) return
 
     const { error } = await supabase.from('chat_messages').insert({
       session_id: selectedSession.id,
-      admin_id: user.id,
+      admin_id: userIdRef.current,
       content: newMessage,
       sender_type: 'admin',
     })
@@ -208,13 +220,12 @@ export default function ConversationsPage() {
 
     setNewMessage('')
     setSending(false)
-    // Realtime will handle the refresh, but also do an immediate one
     await refreshSessions()
     setTimeout(scrollToBottom, 100)
   }
 
   const handleArchive = async (sessionId: string) => {
-    const supabase = createClient()
+    const supabase = supabaseRef.current
     await supabase
       .from('chat_sessions')
       .update({ status: 'closed' })
@@ -223,7 +234,7 @@ export default function ConversationsPage() {
   }
 
   const handleReopen = async (sessionId: string) => {
-    const supabase = createClient()
+    const supabase = supabaseRef.current
     await supabase
       .from('chat_sessions')
       .update({ status: 'active' })
@@ -232,22 +243,18 @@ export default function ConversationsPage() {
   }
 
   const handleDelete = async (sessionId: string) => {
-    const supabase = createClient()
-    
+    const supabase = supabaseRef.current
     await supabase
       .from('chat_messages')
       .delete()
       .eq('session_id', sessionId)
-    
     await supabase
       .from('chat_sessions')
       .delete()
       .eq('id', sessionId)
-    
     if (selectedSessionId === sessionId) {
       setSelectedSessionId(null)
     }
-    
     await refreshSessions()
   }
 
@@ -521,17 +528,16 @@ export default function ConversationsPage() {
                             <div
                               className={`inline-block rounded-xl px-3.5 py-2 text-sm leading-relaxed ${
                                 isAdmin
-                                  ? 'bg-primary text-primary-foreground rounded-tr-sm'
-                                  : 'bg-muted rounded-tl-sm'
+                                  ? 'rounded-tr-sm bg-primary text-primary-foreground'
+                                  : isBot
+                                  ? 'rounded-tl-sm bg-secondary text-secondary-foreground'
+                                  : 'rounded-tl-sm bg-muted'
                               }`}
                             >
                               {message.content}
                             </div>
-                            <p className="mt-1 text-[10px] text-muted-foreground/60">
-                              {new Date(message.created_at).toLocaleTimeString([], {
-                                hour: '2-digit',
-                                minute: '2-digit'
-                              })}
+                            <p className="mt-0.5 text-[10px] text-muted-foreground/50">
+                              {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </p>
                           </div>
                         </div>
@@ -543,44 +549,65 @@ export default function ConversationsPage() {
               </ScrollArea>
 
               {/* Input */}
-              <div className="border-t p-3">
-                <div className="flex gap-2">
-                  <Textarea
-                    placeholder="Type your reply..."
-                    value={newMessage}
-                    onChange={(e) => setNewMessage(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault()
-                        handleSendMessage()
-                      }
+              {selectedSession.status === 'active' ? (
+                <div className="border-t p-3">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault()
+                      handleSendMessage()
                     }}
-                    rows={1}
-                    className="min-h-[40px] resize-none text-sm"
-                  />
-                  <Button 
-                    onClick={handleSendMessage} 
-                    disabled={sending || !newMessage.trim()}
-                    size="icon"
-                    className="h-10 w-10 shrink-0"
+                    className="flex items-end gap-2"
                   >
-                    {sending ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Send className="h-4 w-4" />
-                    )}
-                  </Button>
+                    <Textarea
+                      placeholder="Type your reply..."
+                      className="min-h-[40px] max-h-[120px] resize-none text-sm"
+                      rows={1}
+                      value={newMessage}
+                      onChange={(e) => setNewMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          handleSendMessage()
+                        }
+                      }}
+                    />
+                    <Button
+                      type="submit"
+                      size="icon"
+                      className="h-10 w-10 shrink-0"
+                      disabled={!newMessage.trim() || sending}
+                    >
+                      {sending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Send className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </form>
                 </div>
-              </div>
+              ) : (
+                <div className="border-t p-3 text-center">
+                  <p className="text-xs text-muted-foreground">
+                    This conversation is closed.{' '}
+                    <button
+                      onClick={() => handleReopen(selectedSession.id)}
+                      className="text-primary hover:underline"
+                    >
+                      Reopen it
+                    </button>
+                    {' '}to reply.
+                  </p>
+                </div>
+              )}
             </>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center text-center px-4">
+            <div className="flex flex-1 flex-col items-center justify-center text-center p-8">
               <div className="rounded-full bg-muted p-4">
                 <MessageSquare className="h-8 w-8 text-muted-foreground/30" />
               </div>
-              <h3 className="mt-4 text-sm font-medium">Select a conversation</h3>
-              <p className="mt-1 text-xs text-muted-foreground max-w-[240px]">
-                Choose a conversation from the list to view messages and reply
+              <h3 className="mt-4 text-lg font-medium">Select a conversation</h3>
+              <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                Choose a conversation from the list to view and respond to messages.
               </p>
             </div>
           )}
