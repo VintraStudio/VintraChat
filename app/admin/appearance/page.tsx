@@ -58,11 +58,30 @@ export default function AppearancePage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { data } = await supabase
+    let { data } = await supabase
       .from('chatbot_configs')
       .select('*')
       .eq('admin_id', user.id)
       .single()
+
+    // Auto-create default config if none exists
+    if (!data) {
+      const { data: newConfig } = await supabase
+        .from('chatbot_configs')
+        .insert({
+          admin_id: user.id,
+          widget_title: 'Chat with us',
+          welcome_message: 'Hi! How can we help you today?',
+          primary_color: '#14b8a6',
+          position: 'bottom-right',
+          show_branding: true,
+          placeholder_text: 'Type your message...',
+          offline_message: "We're currently offline. Leave a message and we'll get back to you!",
+        })
+        .select('*')
+        .single()
+      data = newConfig
+    }
 
     if (data) {
       setConfig(data)

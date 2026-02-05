@@ -186,8 +186,8 @@ export function ChatWidget() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-3">
-            <code className="flex-1 rounded-lg bg-muted px-4 py-3 font-mono text-sm">
-              {chatbotId}
+            <code className="flex-1 rounded-lg bg-muted px-4 py-3 font-mono text-sm text-foreground select-all">
+              {chatbotId || 'Loading...'}
             </code>
             <Button
               variant="outline"
