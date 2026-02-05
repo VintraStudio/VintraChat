@@ -61,11 +61,27 @@ export default function SettingsPage() {
 
     setEmail(user.email || '')
 
-    const { data } = await supabase
+    let { data } = await supabase
       .from('admin_profiles')
       .select('*')
       .eq('id', user.id)
       .single()
+
+    // Auto-create profile if it doesn't exist
+    if (!data) {
+      const { data: newProfile } = await supabase
+        .from('admin_profiles')
+        .upsert({
+          id: user.id,
+          full_name: '',
+          company_name: null,
+          email_notifications: true,
+          timezone: 'UTC',
+        }, { onConflict: 'id' })
+        .select('*')
+        .single()
+      data = newProfile
+    }
 
     if (data) {
       setProfile(data)

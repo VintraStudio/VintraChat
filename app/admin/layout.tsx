@@ -24,13 +24,29 @@ export default async function AdminLayout({
 
     user = authUser
 
-    // Fetch admin profile
+    // Fetch or create admin profile
     const { data: profileData } = await supabase
       .from('admin_profiles')
       .select('*')
       .eq('id', user.id)
       .single()
-    profile = profileData
+
+    if (profileData) {
+      profile = profileData
+    } else {
+      const { data: newProfile } = await supabase
+        .from('admin_profiles')
+        .upsert({
+          id: user.id,
+          full_name: user.user_metadata?.full_name || '',
+          company_name: null,
+          email_notifications: true,
+          timezone: 'UTC',
+        }, { onConflict: 'id' })
+        .select('*')
+        .single()
+      profile = newProfile
+    }
 
     // Fetch chatbot config – auto-create a default one if none exists
     const { data: chatbotData } = await supabase
@@ -46,6 +62,7 @@ export default async function AdminLayout({
         .from('chatbot_configs')
         .insert({
           admin_id: user.id,
+          name: 'My Chatbot',
           widget_title: 'Chat with us',
           welcome_message: 'Hi! How can we help you today?',
           primary_color: '#14b8a6',

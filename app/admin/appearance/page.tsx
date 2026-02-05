@@ -70,6 +70,7 @@ export default function AppearancePage() {
         .from('chatbot_configs')
         .insert({
           admin_id: user.id,
+          name: 'My Chatbot',
           widget_title: 'Chat with us',
           welcome_message: 'Hi! How can we help you today?',
           primary_color: '#14b8a6',
