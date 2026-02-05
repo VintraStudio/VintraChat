@@ -1,12 +1,18 @@
 import { createPublicClient } from '@/lib/supabase/public'
 import { NextRequest, NextResponse } from 'next/server'
 
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+}
+
 export async function GET(request: NextRequest) {
   const sessionId = request.nextUrl.searchParams.get('session_id')
   const afterId = request.nextUrl.searchParams.get('after')
 
   if (!sessionId) {
-    return NextResponse.json({ error: 'Missing session_id' }, { status: 400 })
+    return NextResponse.json({ error: 'Missing session_id' }, { status: 400, headers: corsHeaders })
   }
 
   try {
@@ -35,28 +41,16 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('Messages fetch error:', error)
-      return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500 })
+      return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500, headers: corsHeaders })
     }
 
-    return NextResponse.json(messages || [], {
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      },
-    })
+    return NextResponse.json(messages || [], { headers: corsHeaders })
   } catch (error) {
     console.error('Messages API error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders })
   }
 }
 
 export async function OPTIONS() {
-  return new NextResponse(null, {
-    headers: {
-      'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type',
-    },
-  })
+  return new NextResponse(null, { headers: corsHeaders })
 }
