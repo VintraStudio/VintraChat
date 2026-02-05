@@ -10,6 +10,7 @@ import {
   Clock,
   ArrowUpRight,
   ArrowDownRight,
+  Minus,
   Zap,
   Palette,
   Code2,
@@ -22,6 +23,13 @@ import {
 async function getDashboardStats(adminId: string) {
   const supabase = await createClient()
   
+  const now = new Date()
+  const sevenDaysAgo = new Date(now)
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
+  const fourteenDaysAgo = new Date(now)
+  fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14)
+
+  // All-time counts
   const { count: totalSessions } = await supabase
     .from('chat_sessions')
     .select('*', { count: 'exact', head: true })
@@ -32,14 +40,35 @@ async function getDashboardStats(adminId: string) {
     .select('*', { count: 'exact', head: true })
     .eq('admin_id', adminId)
 
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-  
-  const { count: recentSessions } = await supabase
+  // Current period (last 7 days)
+  const { count: currentSessions } = await supabase
     .from('chat_sessions')
     .select('*', { count: 'exact', head: true })
     .eq('admin_id', adminId)
     .gte('created_at', sevenDaysAgo.toISOString())
+
+  // Previous period (7-14 days ago)
+  const { count: previousSessions } = await supabase
+    .from('chat_sessions')
+    .select('*', { count: 'exact', head: true })
+    .eq('admin_id', adminId)
+    .gte('created_at', fourteenDaysAgo.toISOString())
+    .lt('created_at', sevenDaysAgo.toISOString())
+
+  // Current period messages
+  const { count: currentMessages } = await supabase
+    .from('chat_messages')
+    .select('*', { count: 'exact', head: true })
+    .eq('admin_id', adminId)
+    .gte('created_at', sevenDaysAgo.toISOString())
+
+  // Previous period messages
+  const { count: previousMessages } = await supabase
+    .from('chat_messages')
+    .select('*', { count: 'exact', head: true })
+    .eq('admin_id', adminId)
+    .gte('created_at', fourteenDaysAgo.toISOString())
+    .lt('created_at', sevenDaysAgo.toISOString())
 
   const { count: activeSessions } = await supabase
     .from('chat_sessions')
@@ -47,7 +76,7 @@ async function getDashboardStats(adminId: string) {
     .eq('admin_id', adminId)
     .eq('status', 'active')
 
-  // Get unique visitor count
+  // Unique visitors
   const { data: uniqueVisitors } = await supabase
     .from('chat_sessions')
     .select('visitor_email')
@@ -56,12 +85,23 @@ async function getDashboardStats(adminId: string) {
 
   const uniqueEmails = new Set(uniqueVisitors?.map(v => v.visitor_email) || [])
 
+  // Calculate percentage changes
+  const sessionsChange = previousSessions
+    ? Math.round(((currentSessions || 0) - previousSessions) / previousSessions * 100)
+    : currentSessions ? 100 : 0
+
+  const messagesChange = previousMessages
+    ? Math.round(((currentMessages || 0) - previousMessages) / previousMessages * 100)
+    : currentMessages ? 100 : 0
+
   return {
     totalSessions: totalSessions || 0,
     totalMessages: totalMessages || 0,
-    recentSessions: recentSessions || 0,
+    recentSessions: currentSessions || 0,
     activeSessions: activeSessions || 0,
     uniqueVisitors: uniqueEmails.size,
+    sessionsChange,
+    messagesChange,
   }
 }
 
@@ -90,6 +130,31 @@ async function getRecentConversations(adminId: string) {
   return data || []
 }
 
+function ChangeIndicator({ change }: { change: number }) {
+  if (change > 0) {
+    return (
+      <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-400">
+        <ArrowUpRight className="h-3 w-3" />
+        {change}%
+      </span>
+    )
+  }
+  if (change < 0) {
+    return (
+      <span className="flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-0.5 font-medium text-red-400">
+        <ArrowDownRight className="h-3 w-3" />
+        {Math.abs(change)}%
+      </span>
+    )
+  }
+  return (
+    <span className="flex items-center gap-0.5 text-muted-foreground">
+      <Minus className="h-3 w-3" />
+      0%
+    </span>
+  )
+}
+
 export default async function AdminDashboard() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -104,33 +169,29 @@ export default async function AdminDashboard() {
       title: 'Total Conversations',
       value: stats.totalSessions,
       icon: Users,
-      change: '+12%',
-      trend: 'up' as const,
-      description: 'All time',
+      change: stats.sessionsChange,
+      description: 'vs last week',
     },
     {
       title: 'Messages',
       value: stats.totalMessages,
       icon: MessageSquare,
-      change: '+8%',
-      trend: 'up' as const,
-      description: 'All time',
+      change: stats.messagesChange,
+      description: 'vs last week',
     },
     {
       title: 'Active Now',
       value: stats.activeSessions,
       icon: Zap,
-      change: stats.activeSessions > 0 ? 'Live' : 'None',
-      trend: 'neutral' as const,
+      isLive: true,
       description: 'Real-time',
     },
     {
       title: 'This Week',
       value: stats.recentSessions,
       icon: TrendingUp,
-      change: '+5%',
-      trend: 'up' as const,
-      description: 'Last 7 days',
+      change: stats.sessionsChange,
+      description: 'last 7 days',
     },
   ]
 
@@ -211,25 +272,15 @@ export default async function AdminDashboard() {
             <CardContent>
               <div className="text-3xl font-bold tracking-tight">{stat.value}</div>
               <div className="mt-1 flex items-center gap-1.5 text-xs">
-                {stat.trend === 'up' && (
-                  <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-400">
-                    <ArrowUpRight className="h-3 w-3" />
-                    {stat.change}
-                  </span>
-                )}
-                {stat.trend === 'down' && (
-                  <span className="flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-0.5 font-medium text-red-400">
-                    <ArrowDownRight className="h-3 w-3" />
-                    {stat.change}
-                  </span>
-                )}
-                {stat.trend === 'neutral' && (
+                {'isLive' in stat && stat.isLive ? (
                   <span className="flex items-center gap-1 text-muted-foreground">
-                    {stat.change === 'Live' && (
+                    {stat.value > 0 && (
                       <Circle className="h-2 w-2 fill-emerald-400 text-emerald-400" />
                     )}
-                    {stat.change}
+                    {stat.value > 0 ? 'Live' : 'None'}
                   </span>
+                ) : (
+                  <ChangeIndicator change={'change' in stat ? stat.change : 0} />
                 )}
                 <span className="text-muted-foreground">{stat.description}</span>
               </div>
@@ -246,7 +297,7 @@ export default async function AdminDashboard() {
             <Link
               key={action.title}
               href={action.href}
-              {...(action.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
+              {...('external' in action && action.external ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
             >
               <Card className="group cursor-pointer transition-all hover:border-primary/30 hover:bg-card/80">
                 <CardContent className="flex items-center gap-4 p-4">

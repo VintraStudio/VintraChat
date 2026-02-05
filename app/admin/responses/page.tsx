@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Loader2, Plus, MoreVertical, Pencil, Trash2, MessagesSquare, Search } from 'lucide-react'
+import { toast } from 'sonner'
 
 interface CannedResponse {
   id: string
@@ -115,12 +116,14 @@ export default function ResponsesPage() {
     setDialogOpen(false)
     setSaving(false)
     await loadResponses()
+    toast.success(editingResponse ? 'Response updated' : 'Response created')
   }
 
   const handleDelete = async (id: string) => {
     const supabase = createClient()
     await supabase.from('canned_responses').delete().eq('id', id)
     await loadResponses()
+    toast.success('Response deleted')
   }
 
   const filteredResponses = responses.filter((response) => {
