@@ -1,25 +1,34 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { createClient } from '@/lib/supabase/client'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Loader2, TrendingUp, MessageSquare, Users, Clock, ArrowUpRight, ArrowDownRight } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
+import { Loader2, TrendingUp, MessageSquare, Users, Clock, ArrowUpRight, ArrowDownRight, Minus } from 'lucide-react'
 import {
   ChartConfig,
   ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
 } from '@/components/ui/chart'
-import { Bar, BarChart, Line, LineChart, XAxis, YAxis, ResponsiveContainer } from 'recharts'
+import { Bar, BarChart, Line, LineChart, XAxis, YAxis } from 'recharts'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 interface AnalyticsData {
   totalSessions: number
   totalMessages: number
   avgResponseTime: number
-  satisfactionRate: number
   sessionsChange: number
   messagesChange: number
   dailyData: { date: string; sessions: number; messages: number }[]
+  responseTimeDistribution: { label: string; value: number }[]
+  peakHours: { hour: string; value: number }[]
+  topPages: { page: string; count: number; percent: number }[]
 }
 
 const chartConfig = {
@@ -36,49 +45,21 @@ const chartConfig = {
 export default function AnalyticsPage() {
   const [data, setData] = useState<AnalyticsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [chartRange, setChartRange] = useState<'7' | '14' | '30'>('30')
 
   useEffect(() => {
     loadAnalytics()
   }, [])
 
   const loadAnalytics = async () => {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    // Get total sessions
-    const { count: totalSessions } = await supabase
-      .from('chat_sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', user.id)
-
-    // Get total messages
-    const { count: totalMessages } = await supabase
-      .from('chat_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', user.id)
-
-    // Generate sample daily data (in production, query from analytics_events)
-    const dailyData = []
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date()
-      date.setDate(date.getDate() - i)
-      dailyData.push({
-        date: date.toLocaleDateString('en-US', { weekday: 'short' }),
-        sessions: Math.floor(Math.random() * 20) + 5,
-        messages: Math.floor(Math.random() * 100) + 20,
-      })
+    try {
+      const response = await fetch('/api/admin/analytics')
+      if (!response.ok) throw new Error('Failed to load analytics')
+      const result = await response.json()
+      setData(result)
+    } catch (error) {
+      console.error('Failed to load analytics:', error)
     }
-
-    setData({
-      totalSessions: totalSessions || 0,
-      totalMessages: totalMessages || 0,
-      avgResponseTime: 2.5,
-      satisfactionRate: 94,
-      sessionsChange: 12,
-      messagesChange: 8,
-      dailyData,
-    })
     setLoading(false)
   }
 
@@ -90,7 +71,20 @@ export default function AnalyticsPage() {
     )
   }
 
-  if (!data) return null
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 text-center">
+        <p className="text-sm text-muted-foreground">Failed to load analytics data.</p>
+      </div>
+    )
+  }
+
+  const filteredDailyData = data.dailyData.slice(-parseInt(chartRange))
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
 
   const statCards = [
     {
@@ -98,34 +92,44 @@ export default function AnalyticsPage() {
       value: data.totalSessions.toLocaleString(),
       change: data.sessionsChange,
       icon: Users,
+      description: 'all time',
     },
     {
       title: 'Total Messages',
       value: data.totalMessages.toLocaleString(),
       change: data.messagesChange,
       icon: MessageSquare,
+      description: 'all time',
     },
     {
       title: 'Avg Response Time',
-      value: `${data.avgResponseTime}m`,
-      change: -15,
+      value: data.avgResponseTime > 0 ? `${data.avgResponseTime}m` : 'N/A',
+      change: 0,
       icon: Clock,
+      description: 'last 30 days',
+      noChange: data.avgResponseTime === 0,
     },
     {
-      title: 'Satisfaction Rate',
-      value: `${data.satisfactionRate}%`,
-      change: 3,
+      title: 'This Week',
+      value: (data.dailyData.slice(-7).reduce((sum, d) => sum + d.sessions, 0)).toLocaleString(),
+      change: data.sessionsChange,
       icon: TrendingUp,
+      description: 'last 7 days',
     },
   ]
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
-        <p className="text-muted-foreground">
-          Track your chatbot performance and engagement metrics
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
+          <p className="text-sm text-muted-foreground">
+            Real performance metrics from your chatbot data
+          </p>
+        </div>
+        <Badge variant="outline" className="text-xs text-muted-foreground">
+          Live Data
+        </Badge>
       </div>
 
       {/* Stats Grid */}
@@ -133,23 +137,38 @@ export default function AnalyticsPage() {
         {statCards.map((stat) => (
           <Card key={stat.title}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">
+              <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
                 {stat.title}
               </CardTitle>
-              <stat.icon className="h-4 w-4 text-muted-foreground" />
+              <div className="rounded-md bg-primary/10 p-1.5">
+                <stat.icon className="h-3.5 w-3.5 text-primary" />
+              </div>
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold">{stat.value}</div>
-              <div className="flex items-center gap-1 text-xs">
-                {stat.change > 0 ? (
-                  <ArrowUpRight className="h-3 w-3 text-green-600" />
+              <div className="text-3xl font-bold tracking-tight">{stat.value}</div>
+              <div className="mt-1 flex items-center gap-1.5 text-xs">
+                {'noChange' in stat && stat.noChange ? (
+                  <span className="flex items-center gap-0.5 text-muted-foreground">
+                    <Minus className="h-3 w-3" />
+                    No data yet
+                  </span>
+                ) : stat.change > 0 ? (
+                  <span className="flex items-center gap-0.5 rounded-full bg-emerald-500/10 px-1.5 py-0.5 font-medium text-emerald-400">
+                    <ArrowUpRight className="h-3 w-3" />
+                    {stat.change}%
+                  </span>
+                ) : stat.change < 0 ? (
+                  <span className="flex items-center gap-0.5 rounded-full bg-red-500/10 px-1.5 py-0.5 font-medium text-red-400">
+                    <ArrowDownRight className="h-3 w-3" />
+                    {Math.abs(stat.change)}%
+                  </span>
                 ) : (
-                  <ArrowDownRight className="h-3 w-3 text-red-600" />
+                  <span className="flex items-center gap-0.5 text-muted-foreground">
+                    <Minus className="h-3 w-3" />
+                    0%
+                  </span>
                 )}
-                <span className={stat.change > 0 ? 'text-green-600' : 'text-red-600'}>
-                  {Math.abs(stat.change)}%
-                </span>
-                <span className="text-muted-foreground">from last period</span>
+                <span className="text-muted-foreground">vs prev. {stat.description}</span>
               </div>
             </CardContent>
           </Card>
@@ -159,46 +178,79 @@ export default function AnalyticsPage() {
       {/* Charts */}
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
-          <CardHeader>
-            <CardTitle>Conversations Over Time</CardTitle>
-            <CardDescription>Daily conversation count for the past week</CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-base">Conversations Over Time</CardTitle>
+              <CardDescription>Daily conversation count</CardDescription>
+            </div>
+            <Select value={chartRange} onValueChange={(v) => setChartRange(v as typeof chartRange)}>
+              <SelectTrigger className="h-8 w-[120px] text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">Last 7 days</SelectItem>
+                <SelectItem value="14">Last 14 days</SelectItem>
+                <SelectItem value="30">Last 30 days</SelectItem>
+              </SelectContent>
+            </Select>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data.dailyData}>
-                  <XAxis dataKey="date" tickLine={false} axisLine={false} />
-                  <YAxis tickLine={false} axisLine={false} />
+            {filteredDailyData.every(d => d.sessions === 0) ? (
+              <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+                No conversation data for this period yet.
+              </div>
+            ) : (
+              <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                <LineChart data={filteredDailyData}>
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={formatDate}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis tickLine={false} axisLine={false} allowDecimals={false} tick={{ fontSize: 11 }} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Line
                     type="monotone"
                     dataKey="sessions"
                     stroke="var(--color-sessions)"
                     strokeWidth={2}
-                    dot={{ fill: 'var(--color-sessions)' }}
+                    dot={{ fill: 'var(--color-sessions)', r: 3 }}
+                    activeDot={{ r: 5 }}
                   />
                 </LineChart>
-              </ResponsiveContainer>
-            </ChartContainer>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Messages Over Time</CardTitle>
-            <CardDescription>Daily message count for the past week</CardDescription>
+            <CardTitle className="text-base">Messages Over Time</CardTitle>
+            <CardDescription>Daily message count</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={chartConfig} className="h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.dailyData}>
-                  <XAxis dataKey="date" tickLine={false} axisLine={false} />
-                  <YAxis tickLine={false} axisLine={false} />
+            {filteredDailyData.every(d => d.messages === 0) ? (
+              <div className="flex h-[300px] items-center justify-center text-sm text-muted-foreground">
+                No message data for this period yet.
+              </div>
+            ) : (
+              <ChartContainer config={chartConfig} className="h-[300px] w-full">
+                <BarChart data={filteredDailyData}>
+                  <XAxis
+                    dataKey="date"
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={formatDate}
+                    tick={{ fontSize: 11 }}
+                  />
+                  <YAxis tickLine={false} axisLine={false} allowDecimals={false} tick={{ fontSize: 11 }} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="messages" fill="var(--color-messages)" radius={[4, 4, 0, 0]} />
                 </BarChart>
-              </ResponsiveContainer>
-            </ChartContainer>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -207,97 +259,103 @@ export default function AnalyticsPage() {
       <div className="grid gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardTitle>Top Pages</CardTitle>
-            <CardDescription>Where conversations start</CardDescription>
+            <CardTitle className="text-base">Top Referrer Pages</CardTitle>
+            <CardDescription>Where conversations originate</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                { page: '/pricing', count: 45, percent: 35 },
-                { page: '/features', count: 32, percent: 25 },
-                { page: '/', count: 28, percent: 22 },
-                { page: '/contact', count: 23, percent: 18 },
-              ].map((item) => (
-                <div key={item.page} className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{item.page}</span>
-                      <span className="text-muted-foreground">{item.count}</span>
-                    </div>
-                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full bg-primary transition-all"
-                        style={{ width: `${item.percent}%` }}
-                      />
+            {data.topPages.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <p className="text-sm text-muted-foreground">No referrer data yet.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Pages will appear once visitors start chatting.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {data.topPages.map((item) => (
+                  <div key={item.page} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="truncate font-medium font-mono text-xs">{item.page}</span>
+                        <span className="shrink-0 text-muted-foreground">{item.count}</span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${Math.max(item.percent, 3)}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Response Times</CardTitle>
-            <CardDescription>Average time to first response</CardDescription>
+            <CardTitle className="text-base">Response Times</CardTitle>
+            <CardDescription>Average time to first admin response</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                { label: 'Under 1 min', value: 65 },
-                { label: '1-5 mins', value: 25 },
-                { label: '5-30 mins', value: 8 },
-                { label: 'Over 30 mins', value: 2 },
-              ].map((item) => (
-                <div key={item.label} className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{item.label}</span>
-                      <span className="text-muted-foreground">{item.value}%</span>
-                    </div>
-                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full bg-primary transition-all"
-                        style={{ width: `${item.value}%` }}
-                      />
+            {data.responseTimeDistribution.every(d => d.value === 0) ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <p className="text-sm text-muted-foreground">No response data yet.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Reply to conversations to see response time metrics.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {data.responseTimeDistribution.map((item) => (
+                  <div key={item.label} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{item.label}</span>
+                        <span className="text-muted-foreground">{item.value}%</span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${Math.max(item.value, 1)}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
-            <CardTitle>Peak Hours</CardTitle>
+            <CardTitle className="text-base">Peak Hours</CardTitle>
             <CardDescription>When visitors are most active</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
-              {[
-                { hour: '9 AM - 12 PM', value: 40 },
-                { hour: '12 PM - 3 PM', value: 30 },
-                { hour: '3 PM - 6 PM', value: 20 },
-                { hour: '6 PM - 9 PM', value: 10 },
-              ].map((item) => (
-                <div key={item.hour} className="flex items-center gap-3">
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="font-medium">{item.hour}</span>
-                      <span className="text-muted-foreground">{item.value}%</span>
-                    </div>
-                    <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
-                      <div
-                        className="h-full bg-primary transition-all"
-                        style={{ width: `${item.value}%` }}
-                      />
+            {data.peakHours.every(d => d.value === 0) ? (
+              <div className="flex flex-col items-center justify-center py-8 text-center">
+                <p className="text-sm text-muted-foreground">No activity data yet.</p>
+                <p className="mt-1 text-xs text-muted-foreground">Peak hours will show once visitors start chatting.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {data.peakHours.map((item) => (
+                  <div key={item.hour} className="flex items-center gap-3">
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="font-medium">{item.hour}</span>
+                        <span className="text-muted-foreground">{item.value}%</span>
+                      </div>
+                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-primary transition-all"
+                          style={{ width: `${Math.max(item.value, 1)}%` }}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

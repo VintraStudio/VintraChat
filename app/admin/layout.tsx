@@ -24,21 +24,57 @@ export default async function AdminLayout({
 
     user = authUser
 
-    // Fetch admin profile
+    // Fetch or create admin profile
     const { data: profileData } = await supabase
       .from('admin_profiles')
       .select('*')
       .eq('id', user.id)
       .single()
-    profile = profileData
 
-    // Fetch chatbot config
+    if (profileData) {
+      profile = profileData
+    } else {
+      const { data: newProfile } = await supabase
+        .from('admin_profiles')
+        .upsert({
+          id: user.id,
+          full_name: user.user_metadata?.full_name || '',
+          company_name: null,
+          email_notifications: true,
+          timezone: 'UTC',
+        }, { onConflict: 'id' })
+        .select('*')
+        .single()
+      profile = newProfile
+    }
+
+    // Fetch chatbot config – auto-create a default one if none exists
     const { data: chatbotData } = await supabase
       .from('chatbot_configs')
       .select('*')
       .eq('admin_id', user.id)
       .single()
-    chatbot = chatbotData
+
+    if (chatbotData) {
+      chatbot = chatbotData
+    } else {
+      const { data: newChatbot } = await supabase
+        .from('chatbot_configs')
+        .insert({
+          admin_id: user.id,
+          name: 'My Chatbot',
+          widget_title: 'Chat with us',
+          welcome_message: 'Hi! How can we help you today?',
+          primary_color: '#14b8a6',
+          position: 'bottom-right',
+          show_branding: true,
+          placeholder_text: 'Type your message...',
+          offline_message: "We're currently offline. Leave a message and we'll get back to you!",
+        })
+        .select('*')
+        .single()
+      chatbot = newChatbot
+    }
   } catch (e) {
     // If it's a redirect, rethrow it
     if (e && typeof e === 'object' && 'digest' in e) throw e
