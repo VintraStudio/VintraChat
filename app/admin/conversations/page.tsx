@@ -53,7 +53,7 @@ interface ChatMessage {
 
 export default function ConversationsPage() {
   const [sessions, setSessions] = useState<ChatSession[]>([])
-  const [selectedSession, setSelectedSession] = useState<ChatSession | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState('')
   const [newMessage, setNewMessage] = useState('')
@@ -62,16 +62,25 @@ export default function ConversationsPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('all')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<RealtimeChannel | null>(null)
+  const userIdRef = useRef<string | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  const loadSessions = useCallback(async (selectFirst = false) => {
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
+  // Derive selectedSession from sessions + selectedSessionId (no stale closure)
+  const selectedSession = sessions.find(s => s.id === selectedSessionId) || null
 
+  // Stable data fetcher that doesn't depend on any state
+  const fetchSessions = useCallback(async () => {
+    if (!userIdRef.current) {
+      const supabase = createClient()
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return []
+      userIdRef.current = user.id
+    }
+
+    const supabase = createClient()
     const { data } = await supabase
       .from('chat_sessions')
       .select(`
@@ -88,57 +97,70 @@ export default function ConversationsPage() {
           created_at
         )
       `)
-      .eq('admin_id', user.id)
+      .eq('admin_id', userIdRef.current)
       .order('updated_at', { ascending: false })
 
-    if (data) {
-      const sortedData = data.map(session => ({
-        ...session,
-        chat_messages: [...session.chat_messages].sort(
-          (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-        )
-      }))
-      
-      setSessions(sortedData)
-      
-      if (selectedSession) {
-        const updated = sortedData.find(s => s.id === selectedSession.id)
-        if (updated) {
-          setSelectedSession(updated)
-        }
-      } else if (selectFirst && sortedData.length > 0) {
-        setSelectedSession(sortedData[0])
-      }
-    }
-    setLoading(false)
-  }, [selectedSession])
+    if (!data) return []
 
+    return data.map(session => ({
+      ...session,
+      chat_messages: [...session.chat_messages].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      )
+    }))
+  }, [])
+
+  const refreshSessions = useCallback(async () => {
+    const data = await fetchSessions()
+    setSessions(data)
+    return data
+  }, [fetchSessions])
+
+  // Initial load
+  useEffect(() => {
+    let mounted = true
+    async function init() {
+      const data = await fetchSessions()
+      if (!mounted) return
+      setSessions(data)
+      if (data.length > 0) {
+        setSelectedSessionId(data[0].id)
+      }
+      setLoading(false)
+    }
+    init()
+    return () => { mounted = false }
+  }, [fetchSessions])
+
+  // Realtime subscription -- stable, no dependency on sessions/selectedSession
   useEffect(() => {
     const supabase = createClient()
     
     const setupRealtime = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
+      userIdRef.current = user.id
 
       const channel = supabase
         .channel('admin-chat-updates')
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'chat_messages' },
-          async () => {
-            await loadSessions()
-            scrollToBottom()
+          () => {
+            refreshSessions().then(() => {
+              setTimeout(scrollToBottom, 100)
+            })
           }
         )
         .on(
           'postgres_changes',
           { event: 'INSERT', schema: 'public', table: 'chat_sessions' },
-          async () => { await loadSessions() }
+          () => { refreshSessions() }
         )
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'chat_sessions' },
-          async () => { await loadSessions() }
+          () => { refreshSessions() }
         )
         .subscribe((status) => {
           setIsConnected(status === 'SUBSCRIBED')
@@ -152,17 +174,15 @@ export default function ConversationsPage() {
     return () => {
       if (channelRef.current) {
         supabase.removeChannel(channelRef.current)
+        channelRef.current = null
       }
     }
-  }, [loadSessions])
+  }, [refreshSessions])
 
-  useEffect(() => {
-    loadSessions(true)
-  }, [])
-
+  // Scroll to bottom when selected session messages change
   useEffect(() => {
     scrollToBottom()
-  }, [selectedSession?.chat_messages])
+  }, [selectedSession?.chat_messages?.length])
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedSession) return
@@ -188,6 +208,9 @@ export default function ConversationsPage() {
 
     setNewMessage('')
     setSending(false)
+    // Realtime will handle the refresh, but also do an immediate one
+    await refreshSessions()
+    setTimeout(scrollToBottom, 100)
   }
 
   const handleArchive = async (sessionId: string) => {
@@ -196,6 +219,7 @@ export default function ConversationsPage() {
       .from('chat_sessions')
       .update({ status: 'closed' })
       .eq('id', sessionId)
+    await refreshSessions()
   }
 
   const handleReopen = async (sessionId: string) => {
@@ -204,6 +228,7 @@ export default function ConversationsPage() {
       .from('chat_sessions')
       .update({ status: 'active' })
       .eq('id', sessionId)
+    await refreshSessions()
   }
 
   const handleDelete = async (sessionId: string) => {
@@ -219,11 +244,11 @@ export default function ConversationsPage() {
       .delete()
       .eq('id', sessionId)
     
-    if (selectedSession?.id === sessionId) {
-      setSelectedSession(null)
+    if (selectedSessionId === sessionId) {
+      setSelectedSessionId(null)
     }
     
-    await loadSessions()
+    await refreshSessions()
   }
 
   const formatTimeAgo = (dateStr: string) => {
@@ -242,11 +267,9 @@ export default function ConversationsPage() {
   }
 
   const filteredSessions = sessions.filter((session) => {
-    // Filter by status
     if (filter === 'active' && session.status !== 'active') return false
     if (filter === 'closed' && session.status !== 'closed') return false
 
-    // Filter by search
     if (!searchQuery) return true
     const searchLower = searchQuery.toLowerCase()
     return (
@@ -285,7 +308,7 @@ export default function ConversationsPage() {
               {isConnected ? 'Live' : 'Connecting...'}
             </span>
           </div>
-          <Button variant="outline" size="sm" onClick={() => loadSessions()}>
+          <Button variant="outline" size="sm" onClick={() => refreshSessions()}>
             <RefreshCw className="mr-2 h-3.5 w-3.5" />
             Refresh
           </Button>
@@ -337,13 +360,13 @@ export default function ConversationsPage() {
               <div>
                 {filteredSessions.map((session) => {
                   const lastMessage = session.chat_messages[session.chat_messages.length - 1]
-                  const isSelected = selectedSession?.id === session.id
+                  const isSelected = selectedSessionId === session.id
                   const isUnread = lastMessage?.sender_type === 'visitor' && session.status === 'active'
                   
                   return (
                     <button
                       key={session.id}
-                      onClick={() => setSelectedSession(session)}
+                      onClick={() => setSelectedSessionId(session.id)}
                       className={`w-full border-b border-border/50 p-3 text-left transition-colors hover:bg-muted/50 ${
                         isSelected ? 'bg-muted' : ''
                       }`}
@@ -371,7 +394,7 @@ export default function ConversationsPage() {
                           {lastMessage && (
                             <p className={`mt-0.5 line-clamp-1 text-xs ${isUnread ? 'text-foreground/80' : 'text-muted-foreground'}`}>
                               {lastMessage.sender_type === 'admin' && (
-                                <span className="text-muted-foreground">You: </span>
+                                <span className="text-muted-foreground">{'You: '}</span>
                               )}
                               {lastMessage.content}
                             </p>
@@ -425,7 +448,7 @@ export default function ConversationsPage() {
                     </div>
                     <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       {selectedSession.visitor_email || 'No email'}
-                      <span className="text-muted-foreground/40">|</span>
+                      <span className="text-muted-foreground/40">{'|'}</span>
                       <Clock className="h-3 w-3" />
                       {new Date(selectedSession.created_at).toLocaleDateString()}
                     </p>
