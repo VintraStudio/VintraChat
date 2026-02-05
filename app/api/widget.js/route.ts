@@ -79,6 +79,7 @@ export async function GET() {
       height: 520px;
       max-height: calc(100vh - 120px);
       background: #fff;
+      color: #333;
       border-radius: 16px;
       box-shadow: 0 10px 40px rgba(0, 0, 0, 0.15);
       display: none;
@@ -227,6 +228,11 @@ export async function GET() {
       font-size: 14px;
       outline: none;
       transition: border-color 0.2s;
+      color: #333;
+      background: #fff;
+    }
+    .vintra-input::placeholder {
+      color: #999;
     }
     .vintra-input:focus {
       border-color: var(--vintra-primary, #14b8a6);
@@ -290,6 +296,11 @@ export async function GET() {
       border-radius: 8px;
       font-size: 14px;
       outline: none;
+      color: #333;
+      background: #fff;
+    }
+    .vintra-pre-chat input::placeholder {
+      color: #999;
     }
     .vintra-pre-chat input:focus {
       border-color: var(--vintra-primary, #14b8a6);
