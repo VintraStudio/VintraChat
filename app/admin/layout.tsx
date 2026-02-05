@@ -51,8 +51,10 @@ export default async function AdminLayout({
       <AdminSidebar user={user} profile={profile} />
       <SidebarInset>
         <AdminHeader user={user} chatbotId={chatbot?.id} />
-        <main className="flex-1 overflow-auto p-6">
-          {children}
+        <main className="flex-1 overflow-auto p-4 md:p-6 lg:p-8">
+          <div className="mx-auto max-w-7xl">
+            {children}
+          </div>
         </main>
       </SidebarInset>
     </SidebarProvider>

@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Textarea } from '@/components/ui/textarea'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { 
   Loader2, 
   Search, 
@@ -20,12 +21,15 @@ import {
   Archive,
   Trash2,
   RefreshCw,
-  Circle
+  Circle,
+  Mail,
+  Clock
 } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import type { RealtimeChannel } from '@supabase/supabase-js'
@@ -55,6 +59,7 @@ export default function ConversationsPage() {
   const [newMessage, setNewMessage] = useState('')
   const [sending, setSending] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
+  const [filter, setFilter] = useState<'all' | 'active' | 'closed'>('all')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const channelRef = useRef<RealtimeChannel | null>(null)
 
@@ -87,7 +92,6 @@ export default function ConversationsPage() {
       .order('updated_at', { ascending: false })
 
     if (data) {
-      // Sort messages within each session
       const sortedData = data.map(session => ({
         ...session,
         chat_messages: [...session.chat_messages].sort(
@@ -97,7 +101,6 @@ export default function ConversationsPage() {
       
       setSessions(sortedData)
       
-      // Update selected session if it exists in new data
       if (selectedSession) {
         const updated = sortedData.find(s => s.id === selectedSession.id)
         if (updated) {
@@ -110,7 +113,6 @@ export default function ConversationsPage() {
     setLoading(false)
   }, [selectedSession])
 
-  // Setup real-time subscription
   useEffect(() => {
     const supabase = createClient()
     
@@ -118,49 +120,27 @@ export default function ConversationsPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Subscribe to new messages
       const channel = supabase
         .channel('admin-chat-updates')
         .on(
           'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'chat_messages',
-          },
-          async (payload) => {
-            console.log('[v0] New message received:', payload)
-            // Reload sessions to get updated data
+          { event: 'INSERT', schema: 'public', table: 'chat_messages' },
+          async () => {
             await loadSessions()
             scrollToBottom()
           }
         )
         .on(
           'postgres_changes',
-          {
-            event: 'INSERT',
-            schema: 'public',
-            table: 'chat_sessions',
-          },
-          async (payload) => {
-            console.log('[v0] New session received:', payload)
-            await loadSessions()
-          }
+          { event: 'INSERT', schema: 'public', table: 'chat_sessions' },
+          async () => { await loadSessions() }
         )
         .on(
           'postgres_changes',
-          {
-            event: 'UPDATE',
-            schema: 'public',
-            table: 'chat_sessions',
-          },
-          async (payload) => {
-            console.log('[v0] Session updated:', payload)
-            await loadSessions()
-          }
+          { event: 'UPDATE', schema: 'public', table: 'chat_sessions' },
+          async () => { await loadSessions() }
         )
         .subscribe((status) => {
-          console.log('[v0] Realtime subscription status:', status)
           setIsConnected(status === 'SUBSCRIBED')
         })
 
@@ -176,12 +156,10 @@ export default function ConversationsPage() {
     }
   }, [loadSessions])
 
-  // Initial load
   useEffect(() => {
     loadSessions(true)
   }, [])
 
-  // Scroll to bottom when selected session changes or new messages arrive
   useEffect(() => {
     scrollToBottom()
   }, [selectedSession?.chat_messages])
@@ -202,7 +180,6 @@ export default function ConversationsPage() {
     })
 
     if (!error) {
-      // Update session's updated_at timestamp
       await supabase
         .from('chat_sessions')
         .update({ updated_at: new Date().toISOString() })
@@ -211,7 +188,6 @@ export default function ConversationsPage() {
 
     setNewMessage('')
     setSending(false)
-    // The realtime subscription will handle the update
   }
 
   const handleArchive = async (sessionId: string) => {
@@ -222,16 +198,22 @@ export default function ConversationsPage() {
       .eq('id', sessionId)
   }
 
+  const handleReopen = async (sessionId: string) => {
+    const supabase = createClient()
+    await supabase
+      .from('chat_sessions')
+      .update({ status: 'active' })
+      .eq('id', sessionId)
+  }
+
   const handleDelete = async (sessionId: string) => {
     const supabase = createClient()
     
-    // First delete all messages
     await supabase
       .from('chat_messages')
       .delete()
       .eq('session_id', sessionId)
     
-    // Then delete the session
     await supabase
       .from('chat_sessions')
       .delete()
@@ -244,7 +226,28 @@ export default function ConversationsPage() {
     await loadSessions()
   }
 
+  const formatTimeAgo = (dateStr: string) => {
+    const now = new Date()
+    const date = new Date(dateStr)
+    const diffMs = now.getTime() - date.getTime()
+    const diffMins = Math.floor(diffMs / 60000)
+    const diffHours = Math.floor(diffMins / 60)
+    const diffDays = Math.floor(diffHours / 24)
+
+    if (diffMins < 1) return 'Now'
+    if (diffMins < 60) return `${diffMins}m`
+    if (diffHours < 24) return `${diffHours}h`
+    if (diffDays < 7) return `${diffDays}d`
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+
   const filteredSessions = sessions.filter((session) => {
+    // Filter by status
+    if (filter === 'active' && session.status !== 'active') return false
+    if (filter === 'closed' && session.status !== 'closed') return false
+
+    // Filter by search
+    if (!searchQuery) return true
     const searchLower = searchQuery.toLowerCase()
     return (
       session.visitor_name?.toLowerCase().includes(searchLower) ||
@@ -252,6 +255,8 @@ export default function ConversationsPage() {
       session.chat_messages.some((m) => m.content.toLowerCase().includes(searchLower))
     )
   })
+
+  const activeSessions = sessions.filter(s => s.status === 'active').length
 
   if (loading) {
     return (
@@ -262,147 +267,189 @@ export default function ConversationsPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Conversations</h1>
-          <p className="text-muted-foreground">
-            Manage and respond to chat conversations in real-time
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">Conversations</h1>
+          <p className="text-sm text-muted-foreground">
+            Manage and respond to chats in real-time
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex items-center gap-1.5 rounded-full border px-2.5 py-1">
             <Circle 
-              className={`h-2 w-2 ${isConnected ? 'fill-green-500 text-green-500' : 'fill-yellow-500 text-yellow-500'}`} 
+              className={`h-2 w-2 ${isConnected ? 'fill-emerald-400 text-emerald-400' : 'fill-amber-400 text-amber-400'}`} 
             />
-            <span className="text-muted-foreground">
+            <span className="text-xs text-muted-foreground">
               {isConnected ? 'Live' : 'Connecting...'}
             </span>
           </div>
           <Button variant="outline" size="sm" onClick={() => loadSessions()}>
-            <RefreshCw className="mr-2 h-4 w-4" />
+            <RefreshCw className="mr-2 h-3.5 w-3.5" />
             Refresh
           </Button>
         </div>
       </div>
 
-      <div className="grid h-[calc(100vh-220px)] gap-6 lg:grid-cols-3">
+      <div className="grid h-[calc(100vh-200px)] gap-4 lg:grid-cols-3">
         {/* Sessions List */}
-        <Card className="flex flex-col">
-          <CardHeader className="pb-3">
+        <div className="flex flex-col overflow-hidden rounded-lg border bg-card">
+          {/* Search and Filter */}
+          <div className="space-y-3 border-b p-3">
             <div className="relative">
-              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
-                placeholder="Search conversations..."
-                className="pl-9"
+                placeholder="Search..."
+                className="h-9 pl-9 text-sm"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
               />
             </div>
-          </CardHeader>
-          <CardContent className="flex-1 overflow-hidden p-0">
-            <ScrollArea className="h-full">
-              {filteredSessions.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
-                  <MessageSquare className="h-10 w-10 text-muted-foreground/50" />
-                  <p className="mt-3 text-sm text-muted-foreground">
-                    No conversations found
-                  </p>
+            <Tabs value={filter} onValueChange={(v) => setFilter(v as typeof filter)}>
+              <TabsList className="h-8 w-full">
+                <TabsTrigger value="all" className="flex-1 text-xs h-7">
+                  All ({sessions.length})
+                </TabsTrigger>
+                <TabsTrigger value="active" className="flex-1 text-xs h-7">
+                  Active ({activeSessions})
+                </TabsTrigger>
+                <TabsTrigger value="closed" className="flex-1 text-xs h-7">
+                  Closed ({sessions.length - activeSessions})
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+          </div>
+
+          {/* Sessions */}
+          <ScrollArea className="flex-1">
+            {filteredSessions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center px-4">
+                <div className="rounded-full bg-muted p-3">
+                  <MessageSquare className="h-5 w-5 text-muted-foreground/50" />
                 </div>
-              ) : (
-                <div className="divide-y">
-                  {filteredSessions.map((session) => {
-                    const lastMessage = session.chat_messages[session.chat_messages.length - 1]
-                    const isSelected = selectedSession?.id === session.id
-                    const hasNewMessages = lastMessage?.sender_type === 'visitor'
-                    
-                    return (
-                      <button
-                        key={session.id}
-                        onClick={() => setSelectedSession(session)}
-                        className={`w-full p-4 text-left transition-colors hover:bg-muted/50 ${
-                          isSelected ? 'bg-muted' : ''
-                        }`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex items-center gap-3">
-                            <div className="relative">
-                              <Avatar className="h-10 w-10">
-                                <AvatarFallback className="bg-primary/10 text-primary">
-                                  {session.visitor_name?.[0]?.toUpperCase() || 'V'}
-                                </AvatarFallback>
-                              </Avatar>
-                              {hasNewMessages && session.status === 'active' && (
-                                <span className="absolute -right-0.5 -top-0.5 h-3 w-3 rounded-full border-2 border-background bg-primary" />
-                              )}
-                            </div>
-                            <div className="min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="truncate font-medium">
-                                  {session.visitor_name || 'Anonymous'}
-                                </span>
-                                <Badge
-                                  variant={session.status === 'active' ? 'default' : 'secondary'}
-                                  className="text-xs"
-                                >
-                                  {session.status}
-                                </Badge>
-                              </div>
-                              {lastMessage && (
-                                <p className="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-                                  {lastMessage.sender_type === 'admin' && 'You: '}
-                                  {lastMessage.content}
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                          <span className="shrink-0 text-xs text-muted-foreground">
-                            {new Date(session.updated_at || session.created_at).toLocaleTimeString([], { 
-                              hour: '2-digit', 
-                              minute: '2-digit' 
-                            })}
-                          </span>
+                <p className="mt-3 text-sm font-medium">No conversations</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {searchQuery ? 'Try a different search term' : 'Waiting for visitors to start chatting'}
+                </p>
+              </div>
+            ) : (
+              <div>
+                {filteredSessions.map((session) => {
+                  const lastMessage = session.chat_messages[session.chat_messages.length - 1]
+                  const isSelected = selectedSession?.id === session.id
+                  const isUnread = lastMessage?.sender_type === 'visitor' && session.status === 'active'
+                  
+                  return (
+                    <button
+                      key={session.id}
+                      onClick={() => setSelectedSession(session)}
+                      className={`w-full border-b border-border/50 p-3 text-left transition-colors hover:bg-muted/50 ${
+                        isSelected ? 'bg-muted' : ''
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="relative">
+                          <Avatar className="h-9 w-9">
+                            <AvatarFallback className={`text-xs ${isSelected ? 'bg-primary/15 text-primary' : 'bg-muted-foreground/10 text-muted-foreground'}`}>
+                              {session.visitor_name?.[0]?.toUpperCase() || 'V'}
+                            </AvatarFallback>
+                          </Avatar>
+                          {session.status === 'active' && (
+                            <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-emerald-400" />
+                          )}
                         </div>
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-            </ScrollArea>
-          </CardContent>
-        </Card>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className={`truncate text-sm ${isUnread ? 'font-semibold' : 'font-medium'}`}>
+                              {session.visitor_name || 'Anonymous'}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                              {formatTimeAgo(session.updated_at || session.created_at)}
+                            </span>
+                          </div>
+                          {lastMessage && (
+                            <p className={`mt-0.5 line-clamp-1 text-xs ${isUnread ? 'text-foreground/80' : 'text-muted-foreground'}`}>
+                              {lastMessage.sender_type === 'admin' && (
+                                <span className="text-muted-foreground">You: </span>
+                              )}
+                              {lastMessage.content}
+                            </p>
+                          )}
+                          <div className="mt-1 flex items-center gap-1.5">
+                            {session.visitor_email && (
+                              <span className="flex items-center gap-1 text-[10px] text-muted-foreground/60">
+                                <Mail className="h-2.5 w-2.5" />
+                                {session.visitor_email}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </ScrollArea>
+        </div>
 
         {/* Chat View */}
-        <Card className="flex flex-col lg:col-span-2">
+        <div className="flex flex-col overflow-hidden rounded-lg border bg-card lg:col-span-2">
           {selectedSession ? (
             <>
-              <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
+              {/* Chat Header */}
+              <div className="flex items-center justify-between border-b px-4 py-3">
                 <div className="flex items-center gap-3">
-                  <Avatar>
-                    <AvatarFallback className="bg-primary/10 text-primary">
-                      {selectedSession.visitor_name?.[0]?.toUpperCase() || 'V'}
-                    </AvatarFallback>
-                  </Avatar>
+                  <div className="relative">
+                    <Avatar className="h-9 w-9">
+                      <AvatarFallback className="bg-primary/10 text-xs text-primary">
+                        {selectedSession.visitor_name?.[0]?.toUpperCase() || 'V'}
+                      </AvatarFallback>
+                    </Avatar>
+                    {selectedSession.status === 'active' && (
+                      <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-card bg-emerald-400" />
+                    )}
+                  </div>
                   <div>
-                    <CardTitle className="text-base">
-                      {selectedSession.visitor_name || 'Anonymous Visitor'}
-                    </CardTitle>
-                    <CardDescription className="text-xs">
-                      {selectedSession.visitor_email || 'No email provided'}
-                    </CardDescription>
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-sm font-medium">
+                        {selectedSession.visitor_name || 'Anonymous Visitor'}
+                      </h3>
+                      <Badge 
+                        variant={selectedSession.status === 'active' ? 'default' : 'secondary'}
+                        className="text-[10px] px-1.5 py-0"
+                      >
+                        {selectedSession.status}
+                      </Badge>
+                    </div>
+                    <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                      {selectedSession.visitor_email || 'No email'}
+                      <span className="text-muted-foreground/40">|</span>
+                      <Clock className="h-3 w-3" />
+                      {new Date(selectedSession.created_at).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon">
+                    <Button variant="ghost" size="icon" className="h-8 w-8">
                       <MoreVertical className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => handleArchive(selectedSession.id)}>
-                      <Archive className="mr-2 h-4 w-4" />
-                      Archive
-                    </DropdownMenuItem>
+                    {selectedSession.status === 'active' ? (
+                      <DropdownMenuItem onClick={() => handleArchive(selectedSession.id)}>
+                        <Archive className="mr-2 h-4 w-4" />
+                        Close Conversation
+                      </DropdownMenuItem>
+                    ) : (
+                      <DropdownMenuItem onClick={() => handleReopen(selectedSession.id)}>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Reopen Conversation
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuSeparator />
                     <DropdownMenuItem 
                       className="text-destructive"
                       onClick={() => handleDelete(selectedSession.id)}
@@ -412,63 +459,68 @@ export default function ConversationsPage() {
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-hidden p-0">
-                <ScrollArea className="h-full p-4">
-                  <div className="space-y-4">
-                    {selectedSession.chat_messages.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center py-12 text-center">
-                        <MessageSquare className="h-10 w-10 text-muted-foreground/30" />
-                        <p className="mt-3 text-sm text-muted-foreground">
-                          No messages yet. Send a message to start the conversation.
-                        </p>
+              </div>
+
+              {/* Messages */}
+              <ScrollArea className="flex-1 p-4">
+                <div className="space-y-4">
+                  {selectedSession.chat_messages.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 text-center">
+                      <div className="rounded-full bg-muted p-3">
+                        <MessageSquare className="h-5 w-5 text-muted-foreground/30" />
                       </div>
-                    ) : (
-                      selectedSession.chat_messages.map((message) => {
-                        const isAdmin = message.sender_type === 'admin'
-                        const isBot = message.sender_type === 'bot'
-                        return (
-                          <div
-                            key={message.id}
-                            className={`flex gap-3 ${isAdmin ? 'flex-row-reverse' : ''}`}
-                          >
-                            <Avatar className="h-8 w-8 shrink-0">
-                              <AvatarFallback className={
-                                isAdmin 
-                                  ? 'bg-primary text-primary-foreground' 
-                                  : isBot 
-                                  ? 'bg-secondary text-secondary-foreground'
-                                  : 'bg-muted'
-                              }>
-                                {isAdmin ? 'A' : isBot ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className={`max-w-[70%] ${isAdmin ? 'text-right' : ''}`}>
-                              <div
-                                className={`inline-block rounded-lg px-4 py-2 text-sm ${
-                                  isAdmin
-                                    ? 'bg-primary text-primary-foreground'
-                                    : 'bg-muted'
-                                }`}
-                              >
-                                {message.content}
-                              </div>
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                {new Date(message.created_at).toLocaleTimeString([], {
-                                  hour: '2-digit',
-                                  minute: '2-digit'
-                                })}
-                              </p>
+                      <p className="mt-3 text-sm font-medium">No messages yet</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Send a message to start the conversation.
+                      </p>
+                    </div>
+                  ) : (
+                    selectedSession.chat_messages.map((message) => {
+                      const isAdmin = message.sender_type === 'admin'
+                      const isBot = message.sender_type === 'bot'
+                      return (
+                        <div
+                          key={message.id}
+                          className={`flex gap-2.5 ${isAdmin ? 'flex-row-reverse' : ''}`}
+                        >
+                          <Avatar className="h-7 w-7 shrink-0">
+                            <AvatarFallback className={`text-[10px] ${
+                              isAdmin 
+                                ? 'bg-primary text-primary-foreground' 
+                                : isBot 
+                                ? 'bg-secondary text-secondary-foreground'
+                                : 'bg-muted text-muted-foreground'
+                            }`}>
+                              {isAdmin ? 'A' : isBot ? <Bot className="h-3.5 w-3.5" /> : <User className="h-3.5 w-3.5" />}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div className={`max-w-[70%] ${isAdmin ? 'text-right' : ''}`}>
+                            <div
+                              className={`inline-block rounded-xl px-3.5 py-2 text-sm leading-relaxed ${
+                                isAdmin
+                                  ? 'bg-primary text-primary-foreground rounded-tr-sm'
+                                  : 'bg-muted rounded-tl-sm'
+                              }`}
+                            >
+                              {message.content}
                             </div>
+                            <p className="mt-1 text-[10px] text-muted-foreground/60">
+                              {new Date(message.created_at).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                              })}
+                            </p>
                           </div>
-                        )
-                      })
-                    )}
-                    <div ref={messagesEndRef} />
-                  </div>
-                </ScrollArea>
-              </CardContent>
-              <div className="border-t p-4">
+                        </div>
+                      )
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+              </ScrollArea>
+
+              {/* Input */}
+              <div className="border-t p-3">
                 <div className="flex gap-2">
                   <Textarea
                     placeholder="Type your reply..."
@@ -481,9 +533,14 @@ export default function ConversationsPage() {
                       }
                     }}
                     rows={1}
-                    className="min-h-[44px] resize-none"
+                    className="min-h-[40px] resize-none text-sm"
                   />
-                  <Button onClick={handleSendMessage} disabled={sending || !newMessage.trim()}>
+                  <Button 
+                    onClick={handleSendMessage} 
+                    disabled={sending || !newMessage.trim()}
+                    size="icon"
+                    className="h-10 w-10 shrink-0"
+                  >
                     {sending ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
                     ) : (
@@ -494,15 +551,17 @@ export default function ConversationsPage() {
               </div>
             </>
           ) : (
-            <div className="flex flex-1 flex-col items-center justify-center text-center">
-              <MessageSquare className="h-12 w-12 text-muted-foreground/50" />
-              <h3 className="mt-4 font-medium">No conversation selected</h3>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Select a conversation from the list to view messages
+            <div className="flex flex-1 flex-col items-center justify-center text-center px-4">
+              <div className="rounded-full bg-muted p-4">
+                <MessageSquare className="h-8 w-8 text-muted-foreground/30" />
+              </div>
+              <h3 className="mt-4 text-sm font-medium">Select a conversation</h3>
+              <p className="mt-1 text-xs text-muted-foreground max-w-[240px]">
+                Choose a conversation from the list to view messages and reply
               </p>
             </div>
           )}
-        </Card>
+        </div>
       </div>
     </div>
   )

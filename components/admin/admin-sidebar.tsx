@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import {
-  Bot,
   LayoutDashboard,
   MessageSquare,
   Palette,
@@ -39,6 +38,7 @@ import {
   LogOut,
   ChevronUp,
   Code2,
+  Users,
 } from 'lucide-react'
 
 interface AdminSidebarProps {
@@ -49,7 +49,7 @@ interface AdminSidebarProps {
   } | null
 }
 
-const menuItems = [
+const mainMenuItems = [
   {
     title: 'Dashboard',
     icon: LayoutDashboard,
@@ -61,19 +61,27 @@ const menuItems = [
     href: '/admin/conversations',
   },
   {
+    title: 'Contacts',
+    icon: Users,
+    href: '/admin/contacts',
+  },
+  {
     title: 'Canned Responses',
     icon: MessagesSquare,
     href: '/admin/responses',
   },
   {
-    title: 'Appearance',
-    icon: Palette,
-    href: '/admin/appearance',
-  },
-  {
     title: 'Analytics',
     icon: BarChart3,
     href: '/admin/analytics',
+  },
+]
+
+const configMenuItems = [
+  {
+    title: 'Appearance',
+    icon: Palette,
+    href: '/admin/appearance',
   },
   {
     title: 'Integration',
@@ -94,7 +102,6 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
   const handleSignOut = async () => {
     const supabase = createClient()
     await supabase.auth.signOut()
-    // Clear auth cookies
     document.cookie = 'sb-auth-token=; path=/; max-age=0'
     document.cookie = 'sb-refresh-token=; path=/; max-age=0'
     router.push('/auth/login')
@@ -108,12 +115,17 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
     return user.email?.slice(0, 2).toUpperCase() || 'VS'
   }
 
+  const isActive = (href: string) => {
+    if (href === '/admin') return pathname === '/admin'
+    return pathname.startsWith(href)
+  }
+
   return (
     <Sidebar>
       <SidebarHeader className="border-b border-sidebar-border">
         <SidebarMenu>
           <SidebarMenuItem>
-            <Link href="/admin" className="flex items-center px-2 py-3">
+            <Link href="/admin" className="flex items-center gap-2 px-2 py-3">
               <Image 
                 src={VINTRA_LOGO} 
                 alt="Vintra" 
@@ -121,6 +133,7 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
                 height={32} 
                 className="h-7 w-auto"
               />
+              <span className="sr-only">Vintra Admin</span>
             </Link>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -128,19 +141,30 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Menu</SidebarGroupLabel>
+          <SidebarGroupLabel className="text-[10px] uppercase tracking-widest">Main</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
+              {mainMenuItems.map((item) => (
                 <SidebarMenuItem key={item.href}>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={
-                      item.href === '/admin'
-                        ? pathname === '/admin'
-                        : pathname.startsWith(item.href)
-                    }
-                  >
+                  <SidebarMenuButton asChild isActive={isActive(item.href)}>
+                    <Link href={item.href}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel className="text-[10px] uppercase tracking-widest">Configure</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {configMenuItems.map((item) => (
+                <SidebarMenuItem key={item.href}>
+                  <SidebarMenuButton asChild isActive={isActive(item.href)}>
                     <Link href={item.href}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
@@ -161,7 +185,7 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
                 <SidebarMenuButton size="lg" className="w-full">
                   <Avatar className="h-8 w-8">
                     <AvatarImage src={profile?.avatar_url || undefined} />
-                    <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground text-xs">
+                    <AvatarFallback className="bg-primary/15 text-xs text-primary font-medium">
                       {getInitials()}
                     </AvatarFallback>
                   </Avatar>
@@ -169,11 +193,11 @@ export function AdminSidebar({ user, profile }: AdminSidebarProps) {
                     <span className="truncate text-sm font-medium text-sidebar-foreground">
                       {profile?.company_name || 'My Workspace'}
                     </span>
-                    <span className="truncate text-xs text-sidebar-foreground/60">
+                    <span className="truncate text-xs text-sidebar-foreground/50">
                       {user.email}
                     </span>
                   </div>
-                  <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/60" />
+                  <ChevronUp className="ml-auto h-4 w-4 text-sidebar-foreground/40" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent
