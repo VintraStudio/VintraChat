@@ -1,10 +1,27 @@
-import { createPublicClient } from '@/lib/supabase/public'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
+}
+
+function json(data: unknown, status = 200) {
+  return NextResponse.json(data, { status, headers: corsHeaders })
+}
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return createSupabaseClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders })
 }
 
 export async function GET(request: NextRequest) {
@@ -12,19 +29,21 @@ export async function GET(request: NextRequest) {
   const afterId = request.nextUrl.searchParams.get('after')
 
   if (!sessionId) {
-    return NextResponse.json({ error: 'Missing session_id' }, { status: 400, headers: corsHeaders })
+    return json({ error: 'Missing session_id' }, 400)
+  }
+
+  const supabase = getSupabase()
+  if (!supabase) {
+    return json({ error: 'Server configuration error' }, 500)
   }
 
   try {
-    const supabase = createPublicClient()
-
     let query = supabase
       .from('chat_messages')
       .select('id, content, sender_type, created_at')
       .eq('session_id', sessionId)
       .order('created_at', { ascending: true })
 
-    // Only get messages after a certain ID for polling
     if (afterId) {
       const { data: afterMessage } = await supabase
         .from('chat_messages')
@@ -40,17 +59,11 @@ export async function GET(request: NextRequest) {
     const { data: messages, error } = await query.limit(50)
 
     if (error) {
-      console.error('Messages fetch error:', error)
-      return NextResponse.json({ error: 'Failed to fetch messages' }, { status: 500, headers: corsHeaders })
+      return json({ error: 'Failed to fetch messages', detail: error.message }, 500)
     }
 
-    return NextResponse.json(messages || [], { headers: corsHeaders })
-  } catch (error) {
-    console.error('Messages API error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders })
+    return json(messages || [])
+  } catch (err) {
+    return json({ error: 'Internal server error', detail: String(err) }, 500)
   }
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders })
 }
