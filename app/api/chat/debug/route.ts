@@ -13,11 +13,15 @@ export async function OPTIONS() {
 
 export async function GET() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
+  const key = serviceKey || anonKey
 
   const checks: Record<string, unknown> = {
     has_supabase_url: !!url,
-    has_service_role_key: !!key,
+    has_service_role_key: !!serviceKey,
+    has_anon_key: !!anonKey,
+    using_key: serviceKey ? 'service_role' : anonKey ? 'anon' : 'none',
     supabase_url_prefix: url ? url.substring(0, 30) + '...' : null,
     node_env: process.env.NODE_ENV,
   }
