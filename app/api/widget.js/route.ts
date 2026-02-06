@@ -11,6 +11,11 @@ export async function OPTIONS() {
 }
 
 export async function GET() {
+  // Inject Supabase credentials directly into the widget at serve time
+  // These are PUBLIC keys -- safe to expose in client-side code
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+
   const widgetScript = `
 (function() {
   'use strict';
@@ -31,9 +36,9 @@ export async function GET() {
     API_BASE = window.location.origin;
   }
 
-  // Supabase connection (set after config loads)
-  var SUPABASE_URL = '';
-  var SUPABASE_ANON_KEY = '';
+  // Supabase connection -- injected server-side, always available
+  var SUPABASE_URL = '${supabaseUrl}';
+  var SUPABASE_ANON_KEY = '${supabaseAnonKey}';
   var ADMIN_ID = '';
 
   // Helper: call Supabase REST API directly (has built-in CORS)
@@ -452,28 +457,8 @@ export async function GET() {
         pollMessages();
       }).catch(function(error) {
         console.error('VintraStudio: Failed to start chat', error);
-        // Fallback: try our API route
-        fetch(API_BASE + '/api/chat/session', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chatbot_id: chatbotId,
-            visitor_name: visitorName,
-            visitor_email: visitorEmail || null
-          })
-        }).then(function(r) { return r.json(); }).then(function(d) {
-          sessionId = d.session_id;
-          hasStartedChat = true;
-          preChat.classList.add('hidden');
-          messagesContainer.style.display = 'flex';
-          inputArea.style.display = 'flex';
-          if (config && config.welcome_message) {
-            addMessage(config.welcome_message, 'bot');
-          }
-          pollMessages();
-        }).catch(function(e) {
-          console.error('VintraStudio: All methods failed', e);
-        });
+        startBtn.textContent = 'Retry';
+        startBtn.disabled = false;
       });
     }
 
@@ -558,18 +543,30 @@ export async function GET() {
 
   function init() {
     console.log('[VintraStudio] Initializing widget for chatbot:', chatbotId);
-    var configUrl = API_BASE + '/api/chat/config?chatbot_id=' + chatbotId;
-    console.log('[VintraStudio] Fetching config from:', configUrl);
+    console.log('[VintraStudio] Supabase URL available:', !!SUPABASE_URL);
 
-    fetch(configUrl).then(function(response) {
-      console.log('[VintraStudio] Config response status:', response.status);
-      return response.json();
-    }).then(function(cfg) {
+    // Always fetch config from Supabase directly first (has built-in CORS)
+    // Fall back to API route if Supabase URL not available
+    var configPromise;
+
+    if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+      // Fetch chatbot config directly from Supabase -- bypasses our server entirely
+      configPromise = supabaseRest(
+        'chatbot_configs', 'GET', null,
+        '?id=eq.' + chatbotId + '&select=id,admin_id,widget_title,welcome_message,primary_color,position,avatar_url,show_branding,placeholder_text,offline_message&limit=1'
+      ).then(function(data) {
+        if (data && data[0]) return data[0];
+        throw new Error('Chatbot not found');
+      });
+    } else {
+      configPromise = fetch(API_BASE + '/api/chat/config?chatbot_id=' + chatbotId)
+        .then(function(r) { return r.json(); });
+    }
+
+    configPromise.then(function(cfg) {
       console.log('[VintraStudio] Config loaded:', cfg);
 
-      // Store Supabase connection info for direct API calls
-      if (cfg.supabase_url) { SUPABASE_URL = cfg.supabase_url; }
-      if (cfg.supabase_anon_key) { SUPABASE_ANON_KEY = cfg.supabase_anon_key; }
+      // Store admin_id from config
       if (cfg.admin_id) { ADMIN_ID = cfg.admin_id; }
 
       var widget = createWidget();
@@ -577,6 +574,7 @@ export async function GET() {
       console.log('[VintraStudio] Widget initialized successfully');
     }).catch(function(error) {
       console.error('[VintraStudio] Failed to initialize:', error);
+      // Last resort: create widget with defaults
       var widget = createWidget();
       widget.applyConfig({
         primary_color: '#14b8a6',
