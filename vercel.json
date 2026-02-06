@@ -1,7 +1,43 @@
 {
   "headers": [
     {
-      "source": "/api/chat/(.*)",
+      "source": "/api/chat/:path*",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
+        { "key": "Access-Control-Max-Age", "value": "86400" }
+      ]
+    },
+    {
+      "source": "/api/chat/session",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
+        { "key": "Access-Control-Max-Age", "value": "86400" }
+      ]
+    },
+    {
+      "source": "/api/chat/message",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
+        { "key": "Access-Control-Max-Age", "value": "86400" }
+      ]
+    },
+    {
+      "source": "/api/chat/messages",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
+        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" },
+        { "key": "Access-Control-Max-Age", "value": "86400" }
+      ]
+    },
+    {
+      "source": "/api/chat/config",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
