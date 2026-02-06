@@ -14,30 +14,53 @@ export async function GET() {
   const widgetScript = `
 (function() {
   'use strict';
-  
-  // Configuration
-  const scriptTag = document.currentScript || document.querySelector('script[data-chatbot-id]');
-  const chatbotId = scriptTag ? scriptTag.getAttribute('data-chatbot-id') : null;
-  
+
+  var scriptTag = document.currentScript || document.querySelector('script[data-chatbot-id]');
+  var chatbotId = scriptTag ? scriptTag.getAttribute('data-chatbot-id') : null;
+
   if (!chatbotId) {
     console.error('VintraStudio: Missing data-chatbot-id attribute');
     return;
   }
-  
-  // Extract the base URL from the script src
-  let API_BASE = '';
+
+  var API_BASE = '';
   try {
-    // scriptTag.src is always resolved to absolute URL by the browser
-    const url = new URL(scriptTag.src);
+    var url = new URL(scriptTag.src);
     API_BASE = url.origin;
   } catch (e) {
-    // Fallback to current page origin
     API_BASE = window.location.origin;
   }
-  console.log('[VintraStudio] API Base:', API_BASE);
-  
-  // Styles
-  const styles = \`
+
+  // Supabase connection (set after config loads)
+  var SUPABASE_URL = '';
+  var SUPABASE_ANON_KEY = '';
+  var ADMIN_ID = '';
+
+  // Helper: call Supabase REST API directly (has built-in CORS)
+  function supabaseRest(table, method, body, query) {
+    var fetchUrl = SUPABASE_URL + '/rest/v1/' + table + (query || '');
+    var headers = {
+      'apikey': SUPABASE_ANON_KEY,
+      'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+      'Content-Type': 'application/json',
+      'Prefer': method === 'POST' ? 'return=representation' : ''
+    };
+    return fetch(fetchUrl, {
+      method: method || 'GET',
+      headers: headers,
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function(r) { return r.json(); });
+  }
+
+  // Generate a simple UUID
+  function generateId() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      var r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+  }
+
+  var styles = \`
     .vintra-widget-container {
       position: fixed;
       bottom: 20px;
@@ -95,14 +118,8 @@ export async function GET() {
       display: flex;
     }
     @keyframes vintraSlideUp {
-      from {
-        opacity: 0;
-        transform: translateY(10px);
-      }
-      to {
-        opacity: 1;
-        transform: translateY(0);
-      }
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
     }
     .vintra-header {
       padding: 16px 20px;
@@ -193,9 +210,7 @@ export async function GET() {
       border-radius: 16px;
       border-bottom-left-radius: 4px;
     }
-    .vintra-typing.show {
-      display: block;
-    }
+    .vintra-typing.show { display: block; }
     .vintra-typing-dots {
       display: flex;
       gap: 4px;
@@ -231,9 +246,7 @@ export async function GET() {
       color: #333;
       background: #fff;
     }
-    .vintra-input::placeholder {
-      color: #999;
-    }
+    .vintra-input::placeholder { color: #999; }
     .vintra-input:focus {
       border-color: var(--vintra-primary, #14b8a6);
     }
@@ -248,10 +261,7 @@ export async function GET() {
       justify-content: center;
       transition: opacity 0.2s;
     }
-    .vintra-send:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
+    .vintra-send:disabled { opacity: 0.5; cursor: not-allowed; }
     .vintra-send svg {
       width: 18px;
       height: 18px;
@@ -263,13 +273,8 @@ export async function GET() {
       font-size: 11px;
       color: #999;
     }
-    .vintra-branding a {
-      color: #666;
-      text-decoration: none;
-    }
-    .vintra-branding a:hover {
-      text-decoration: underline;
-    }
+    .vintra-branding a { color: #666; text-decoration: none; }
+    .vintra-branding a:hover { text-decoration: underline; }
     .vintra-pre-chat {
       padding: 20px;
       display: flex;
@@ -277,19 +282,9 @@ export async function GET() {
       gap: 16px;
       flex: 1;
     }
-    .vintra-pre-chat.hidden {
-      display: none;
-    }
-    .vintra-pre-chat h3 {
-      margin: 0;
-      font-size: 18px;
-      color: #333;
-    }
-    .vintra-pre-chat p {
-      margin: 0;
-      font-size: 14px;
-      color: #666;
-    }
+    .vintra-pre-chat.hidden { display: none; }
+    .vintra-pre-chat h3 { margin: 0; font-size: 18px; color: #333; }
+    .vintra-pre-chat p { margin: 0; font-size: 14px; color: #666; }
     .vintra-pre-chat input {
       padding: 12px 16px;
       border: 1px solid #ddd;
@@ -299,9 +294,7 @@ export async function GET() {
       color: #333;
       background: #fff;
     }
-    .vintra-pre-chat input::placeholder {
-      color: #999;
-    }
+    .vintra-pre-chat input::placeholder { color: #999; }
     .vintra-pre-chat input:focus {
       border-color: var(--vintra-primary, #14b8a6);
     }
@@ -315,9 +308,7 @@ export async function GET() {
       cursor: pointer;
       transition: opacity 0.2s;
     }
-    .vintra-pre-chat button:hover {
-      opacity: 0.9;
-    }
+    .vintra-pre-chat button:hover { opacity: 0.9; }
     @media (max-width: 480px) {
       .vintra-chat-window {
         width: calc(100vw - 20px);
@@ -331,103 +322,138 @@ export async function GET() {
       }
     }
   \`;
-  
-  // Inject styles
-  const styleSheet = document.createElement('style');
+
+  var styleSheet = document.createElement('style');
   styleSheet.textContent = styles;
   document.head.appendChild(styleSheet);
-  
-  // State
-  let config = null;
-  let sessionId = null;
-  let visitorName = '';
-  let visitorEmail = '';
-  let isOpen = false;
-  let hasStartedChat = false;
-  
-  // Icons
-  const icons = {
+
+  var config = null;
+  var sessionId = null;
+  var visitorName = '';
+  var visitorEmail = '';
+  var isOpen = false;
+  var hasStartedChat = false;
+
+  var icons = {
     chat: '<svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z"/></svg>',
     close: '<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>',
     send: '<svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>',
     bot: '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>'
   };
-  
-  // Create widget
+
   function createWidget() {
-    const container = document.createElement('div');
+    var container = document.createElement('div');
     container.className = 'vintra-widget-container';
-    container.innerHTML = \`
-      <div class="vintra-chat-window">
-        <div class="vintra-header">
-          <div class="vintra-header-avatar">\${icons.bot}</div>
-          <div class="vintra-header-info">
-            <h4 class="vintra-title">Chat with us</h4>
-            <p>We typically reply within minutes</p>
-          </div>
-          <button class="vintra-close">\${icons.close}</button>
-        </div>
-        <div class="vintra-pre-chat">
-          <h3>Start a conversation</h3>
-          <p>Please provide your details to begin chatting.</p>
-          <input type="text" class="vintra-name-input" placeholder="Your name">
-          <input type="email" class="vintra-email-input" placeholder="Your email (optional)">
-          <button class="vintra-start-btn">Start Chat</button>
-        </div>
-        <div class="vintra-messages" style="display: none;"></div>
-        <div class="vintra-typing">
-          <div class="vintra-typing-dots">
-            <span></span><span></span><span></span>
-          </div>
-        </div>
-        <div class="vintra-input-area" style="display: none;">
-          <input type="text" class="vintra-input" placeholder="Type your message...">
-          <button class="vintra-send">\${icons.send}</button>
-        </div>
-        <div class="vintra-branding" style="display: none;">
-          Powered by <a href="https://vintrastudio.com" target="_blank">VintraStudio</a>
-        </div>
-      </div>
-      <button class="vintra-launcher">\${icons.chat}</button>
-    \`;
+    container.innerHTML =
+      '<div class="vintra-chat-window">' +
+        '<div class="vintra-header">' +
+          '<div class="vintra-header-avatar">' + icons.bot + '</div>' +
+          '<div class="vintra-header-info">' +
+            '<h4 class="vintra-title">Chat with us</h4>' +
+            '<p>We typically reply within minutes</p>' +
+          '</div>' +
+          '<button class="vintra-close">' + icons.close + '</button>' +
+        '</div>' +
+        '<div class="vintra-pre-chat">' +
+          '<h3>Start a conversation</h3>' +
+          '<p>Please provide your details to begin chatting.</p>' +
+          '<input type="text" class="vintra-name-input" placeholder="Your name">' +
+          '<input type="email" class="vintra-email-input" placeholder="Your email (optional)">' +
+          '<button class="vintra-start-btn">Start Chat</button>' +
+        '</div>' +
+        '<div class="vintra-messages" style="display: none;"></div>' +
+        '<div class="vintra-typing">' +
+          '<div class="vintra-typing-dots"><span></span><span></span><span></span></div>' +
+        '</div>' +
+        '<div class="vintra-input-area" style="display: none;">' +
+          '<input type="text" class="vintra-input" placeholder="Type your message...">' +
+          '<button class="vintra-send">' + icons.send + '</button>' +
+        '</div>' +
+        '<div class="vintra-branding" style="display: none;">' +
+          'Powered by <a href="https://vintrastudio.com" target="_blank">VintraStudio</a>' +
+        '</div>' +
+      '</div>' +
+      '<button class="vintra-launcher">' + icons.chat + '</button>';
     document.body.appendChild(container);
-    
-    // Elements
-    const launcher = container.querySelector('.vintra-launcher');
-    const chatWindow = container.querySelector('.vintra-chat-window');
-    const closeBtn = container.querySelector('.vintra-close');
-    const messagesContainer = container.querySelector('.vintra-messages');
-    const input = container.querySelector('.vintra-input');
-    const sendBtn = container.querySelector('.vintra-send');
-    const preChat = container.querySelector('.vintra-pre-chat');
-    const inputArea = container.querySelector('.vintra-input-area');
-    const branding = container.querySelector('.vintra-branding');
-    const nameInput = container.querySelector('.vintra-name-input');
-    const emailInput = container.querySelector('.vintra-email-input');
-    const startBtn = container.querySelector('.vintra-start-btn');
-    const header = container.querySelector('.vintra-header');
-    const title = container.querySelector('.vintra-title');
-    
-    // Event handlers
-    launcher.addEventListener('click', () => toggleChat(true));
-    closeBtn.addEventListener('click', () => toggleChat(false));
+
+    var launcher = container.querySelector('.vintra-launcher');
+    var chatWindow = container.querySelector('.vintra-chat-window');
+    var closeBtn = container.querySelector('.vintra-close');
+    var messagesContainer = container.querySelector('.vintra-messages');
+    var input = container.querySelector('.vintra-input');
+    var sendBtn = container.querySelector('.vintra-send');
+    var preChat = container.querySelector('.vintra-pre-chat');
+    var inputArea = container.querySelector('.vintra-input-area');
+    var branding = container.querySelector('.vintra-branding');
+    var nameInput = container.querySelector('.vintra-name-input');
+    var emailInput = container.querySelector('.vintra-email-input');
+    var startBtn = container.querySelector('.vintra-start-btn');
+    var header = container.querySelector('.vintra-header');
+    var title = container.querySelector('.vintra-title');
+
+    launcher.addEventListener('click', function() { toggleChat(true); });
+    closeBtn.addEventListener('click', function() { toggleChat(false); });
     sendBtn.addEventListener('click', sendMessage);
-    input.addEventListener('keypress', (e) => {
+    input.addEventListener('keypress', function(e) {
       if (e.key === 'Enter') sendMessage();
     });
     startBtn.addEventListener('click', startChat);
-    
+
     function toggleChat(open) {
       isOpen = open;
       chatWindow.classList.toggle('open', open);
     }
-    
-    async function startChat() {
+
+    function startChat() {
       visitorName = nameInput.value.trim() || 'Visitor';
       visitorEmail = emailInput.value.trim();
-      
-      try {
-        const response = await fetch(API_BASE + '/api/chat/session', {
+
+      var newSessionId = generateId();
+      var visitorId = generateId();
+
+      // Insert session directly into Supabase (Supabase REST API has CORS built-in)
+      supabaseRest('chat_sessions', 'POST', {
+        id: newSessionId,
+        chatbot_id: chatbotId,
+        admin_id: ADMIN_ID,
+        visitor_id: visitorId,
+        visitor_name: visitorName,
+        visitor_email: visitorEmail || null,
+        status: 'active',
+        last_message_at: new Date().toISOString()
+      }).then(function(data) {
+        if (data && data[0]) {
+          sessionId = data[0].id;
+        } else {
+          sessionId = newSessionId;
+        }
+        hasStartedChat = true;
+
+        preChat.classList.add('hidden');
+        messagesContainer.style.display = 'flex';
+        inputArea.style.display = 'flex';
+        if (config && config.show_branding) {
+          branding.style.display = 'block';
+        }
+
+        if (config && config.welcome_message) {
+          addMessage(config.welcome_message, 'bot');
+          // Also save welcome message to DB
+          supabaseRest('chat_messages', 'POST', {
+            id: generateId(),
+            session_id: sessionId,
+            admin_id: ADMIN_ID,
+            content: config.welcome_message,
+            sender_type: 'bot',
+            is_read: true
+          });
+        }
+
+        pollMessages();
+      }).catch(function(error) {
+        console.error('VintraStudio: Failed to start chat', error);
+        // Fallback: try our API route
+        fetch(API_BASE + '/api/chat/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -435,91 +461,86 @@ export async function GET() {
             visitor_name: visitorName,
             visitor_email: visitorEmail || null
           })
+        }).then(function(r) { return r.json(); }).then(function(d) {
+          sessionId = d.session_id;
+          hasStartedChat = true;
+          preChat.classList.add('hidden');
+          messagesContainer.style.display = 'flex';
+          inputArea.style.display = 'flex';
+          if (config && config.welcome_message) {
+            addMessage(config.welcome_message, 'bot');
+          }
+          pollMessages();
+        }).catch(function(e) {
+          console.error('VintraStudio: All methods failed', e);
         });
-        
-        const data = await response.json();
-        sessionId = data.session_id;
-        hasStartedChat = true;
-        
-        preChat.classList.add('hidden');
-        messagesContainer.style.display = 'flex';
-        inputArea.style.display = 'flex';
-        if (config?.show_branding) {
-          branding.style.display = 'block';
-        }
-        
-        // Add welcome message
-        if (config?.welcome_message) {
-          addMessage(config.welcome_message, 'bot');
-        }
-        
-        // Start polling for messages
-        pollMessages();
-      } catch (error) {
-        console.error('VintraStudio: Failed to start chat', error);
-      }
+      });
     }
-    
-    async function sendMessage() {
-      const content = input.value.trim();
+
+    function sendMessage() {
+      var content = input.value.trim();
       if (!content || !sessionId) return;
-      
+
       input.value = '';
       addMessage(content, 'visitor');
-      
-      try {
-        await fetch(API_BASE + '/api/chat/message', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            session_id: sessionId,
-            content: content,
-            sender_type: 'visitor'
-          })
-        });
-      } catch (error) {
-        console.error('VintraStudio: Failed to send message', error);
-      }
+
+      // Send directly to Supabase
+      supabaseRest('chat_messages', 'POST', {
+        id: generateId(),
+        session_id: sessionId,
+        admin_id: ADMIN_ID,
+        content: content,
+        sender_type: 'visitor',
+        is_read: false
+      });
+
+      // Update last_message_at on the session
+      supabaseRest('chat_sessions', 'PATCH', {
+        last_message_at: new Date().toISOString()
+      }, '?id=eq.' + sessionId);
     }
-    
+
     function addMessage(content, type) {
-      const message = document.createElement('div');
+      var message = document.createElement('div');
       message.className = 'vintra-message ' + type;
       message.textContent = content;
-      if (type === 'visitor' && config?.primary_color) {
+      if (type === 'visitor' && config && config.primary_color) {
         message.style.background = config.primary_color;
       }
       messagesContainer.appendChild(message);
       messagesContainer.scrollTop = messagesContainer.scrollHeight;
     }
-    
-    let lastMessageId = null;
-    async function pollMessages() {
+
+    var knownMessageIds = {};
+    function pollMessages() {
       if (!sessionId || !hasStartedChat) return;
-      
-      try {
-        const url = API_BASE + '/api/chat/messages?session_id=' + sessionId + 
-          (lastMessageId ? '&after=' + lastMessageId : '');
-        const response = await fetch(url);
-        const messages = await response.json();
-        
-        messages.forEach(msg => {
-          if (msg.sender_type !== 'visitor') {
-            addMessage(msg.content, msg.sender_type);
-          }
-          lastMessageId = msg.id;
-        });
-      } catch (error) {
-        console.error('VintraStudio: Failed to poll messages', error);
-      }
-      
+
+      // Query messages directly from Supabase
+      supabaseRest('chat_messages', 'GET', null,
+        '?session_id=eq.' + sessionId + '&sender_type=neq.visitor&order=created_at.asc&select=id,content,sender_type,created_at'
+      ).then(function(messages) {
+        if (Array.isArray(messages)) {
+          messages.forEach(function(msg) {
+            if (!knownMessageIds[msg.id]) {
+              knownMessageIds[msg.id] = true;
+              // Skip the welcome message we already showed
+              if (msg.sender_type === 'bot' && msg.content === config.welcome_message && Object.keys(knownMessageIds).length <= 2) {
+                return;
+              }
+              addMessage(msg.content, msg.sender_type);
+            }
+          });
+        }
+      }).catch(function(err) {
+        console.error('VintraStudio: Poll error', err);
+      });
+
       setTimeout(pollMessages, 3000);
     }
-    
-    // Apply config
+
     function applyConfig(cfg) {
       config = cfg;
-      
+
       if (cfg.primary_color) {
         launcher.style.background = cfg.primary_color;
         header.style.background = cfg.primary_color;
@@ -527,72 +548,36 @@ export async function GET() {
         startBtn.style.background = cfg.primary_color;
         document.documentElement.style.setProperty('--vintra-primary', cfg.primary_color);
       }
-      
-      if (cfg.widget_title) {
-        title.textContent = cfg.widget_title;
-      }
-      
-      if (cfg.placeholder_text) {
-        input.placeholder = cfg.placeholder_text;
-      }
-      
-      if (cfg.position === 'bottom-left') {
-        container.classList.add('position-left');
-      }
+      if (cfg.widget_title) { title.textContent = cfg.widget_title; }
+      if (cfg.placeholder_text) { input.placeholder = cfg.placeholder_text; }
+      if (cfg.position === 'bottom-left') { container.classList.add('position-left'); }
     }
-    
-    return { applyConfig };
+
+    return { applyConfig: applyConfig };
   }
-  
-  // Initialize
-  async function init() {
+
+  function init() {
     console.log('[VintraStudio] Initializing widget for chatbot:', chatbotId);
-    try {
-      const configUrl = API_BASE + '/api/chat/config?chatbot_id=' + chatbotId;
-      console.log('[VintraStudio] Fetching config from:', configUrl);
-      
-      const response = await fetch(configUrl);
+    var configUrl = API_BASE + '/api/chat/config?chatbot_id=' + chatbotId;
+    console.log('[VintraStudio] Fetching config from:', configUrl);
+
+    fetch(configUrl).then(function(response) {
       console.log('[VintraStudio] Config response status:', response.status);
-      
-      if (!response.ok) {
-        console.error('[VintraStudio] Config fetch failed:', response.status, response.statusText);
-        // Create widget with default config anyway
-        const widget = createWidget();
-        widget.applyConfig({
-          primary_color: '#14b8a6',
-          widget_title: 'Chat with us',
-          welcome_message: 'Hi! How can we help you today?',
-          placeholder_text: 'Type your message...',
-          show_branding: true,
-          position: 'bottom-right'
-        });
-        return;
-      }
-      
-      const config = await response.json();
-      console.log('[VintraStudio] Config loaded:', config);
-      
-      if (config.error) {
-        console.warn('[VintraStudio]:', config.error, '- using defaults');
-        const widget = createWidget();
-        widget.applyConfig({
-          primary_color: '#14b8a6',
-          widget_title: 'Chat with us',
-          welcome_message: 'Hi! How can we help you today?',
-          placeholder_text: 'Type your message...',
-          show_branding: true,
-          position: 'bottom-right'
-        });
-        return;
-      }
-      
-      const widget = createWidget();
-      widget.applyConfig(config);
+      return response.json();
+    }).then(function(cfg) {
+      console.log('[VintraStudio] Config loaded:', cfg);
+
+      // Store Supabase connection info for direct API calls
+      if (cfg.supabase_url) { SUPABASE_URL = cfg.supabase_url; }
+      if (cfg.supabase_anon_key) { SUPABASE_ANON_KEY = cfg.supabase_anon_key; }
+      if (cfg.admin_id) { ADMIN_ID = cfg.admin_id; }
+
+      var widget = createWidget();
+      widget.applyConfig(cfg);
       console.log('[VintraStudio] Widget initialized successfully');
-    } catch (error) {
+    }).catch(function(error) {
       console.error('[VintraStudio] Failed to initialize:', error);
-      // Create widget with default config on error
-      const widget = createWidget();
+      var widget = createWidget();
       widget.applyConfig({
         primary_color: '#14b8a6',
         widget_title: 'Chat with us',
@@ -601,9 +586,9 @@ export async function GET() {
         show_branding: true,
         position: 'bottom-right'
       });
-    }
+    });
   }
-  
+
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
@@ -615,7 +600,7 @@ export async function GET() {
   return new NextResponse(widgetScript, {
     headers: {
       'Content-Type': 'application/javascript; charset=utf-8',
-      'Cache-Control': 'public, max-age=300',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
