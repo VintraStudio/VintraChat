@@ -39,7 +39,7 @@ export async function GET(request: NextRequest) {
   try {
     const { data, error } = await supabase
       .from('chatbot_configs')
-      .select('widget_title, welcome_message, primary_color, position, avatar_url, show_branding, placeholder_text, offline_message')
+      .select('id, admin_id, widget_title, welcome_message, primary_color, position, avatar_url, show_branding, placeholder_text, offline_message')
       .eq('id', chatbotId)
       .single()
 
@@ -47,7 +47,14 @@ export async function GET(request: NextRequest) {
       return json({ error: 'Chatbot not found' }, 404)
     }
 
-    return json(data)
+    // Include Supabase connection info so the widget can talk directly to Supabase
+    // (bypasses our API routes entirely, avoiding CORS issues)
+    return json({
+      ...data,
+      admin_id: data.admin_id,
+      supabase_url: process.env.NEXT_PUBLIC_SUPABASE_URL,
+      supabase_anon_key: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    })
   } catch (err) {
     return json({ error: 'Internal server error', detail: String(err) }, 500)
   }
