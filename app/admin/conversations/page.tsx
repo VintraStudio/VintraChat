@@ -48,6 +48,7 @@ interface ChatMessage {
   content: string
   sender_type: 'visitor' | 'admin' | 'bot'
   created_at: string
+  is_read: boolean
 }
 
 export default function ConversationsPage() {
@@ -92,7 +93,8 @@ export default function ConversationsPage() {
           id,
           content,
           sender_type,
-          created_at
+          created_at,
+          is_read
         )
       `)
       .eq('admin_id', userIdRef.current)
@@ -196,6 +198,23 @@ export default function ConversationsPage() {
   useEffect(() => {
     scrollToBottom()
   }, [selectedSession?.chat_messages?.length])
+
+  // Mark messages as read when a conversation is selected
+  useEffect(() => {
+    if (!selectedSession) return
+    const unreadMessages = selectedSession.chat_messages.filter(
+      m => m.sender_type === 'visitor' && !m.is_read
+    )
+    if (unreadMessages.length === 0) return
+
+    const supabase = supabaseRef.current
+    const ids = unreadMessages.map(m => m.id)
+    supabase
+      .from('chat_messages')
+      .update({ is_read: true })
+      .in('id', ids)
+      .then(() => refreshSessions())
+  }, [selectedSessionId, selectedSession?.chat_messages?.length, refreshSessions])
 
   const handleSendMessage = async () => {
     if (!newMessage.trim() || !selectedSession) return
@@ -368,7 +387,7 @@ export default function ConversationsPage() {
                 {filteredSessions.map((session) => {
                   const lastMessage = session.chat_messages[session.chat_messages.length - 1]
                   const isSelected = selectedSessionId === session.id
-                  const isUnread = lastMessage?.sender_type === 'visitor' && session.status === 'active'
+                  const isUnread = session.chat_messages.some(m => m.sender_type === 'visitor' && !m.is_read)
                   
                   return (
                     <button

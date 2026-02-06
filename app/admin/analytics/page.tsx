@@ -86,24 +86,37 @@ export default function AnalyticsPage() {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
 
+  const thisWeekSessions = data.dailyData.slice(-7).reduce((sum, d) => sum + d.sessions, 0)
+  const lastWeekSessions = data.dailyData.slice(-14, -7).reduce((sum, d) => sum + d.sessions, 0)
+  const thisWeekChange = lastWeekSessions
+    ? Math.round((thisWeekSessions - lastWeekSessions) / lastWeekSessions * 100)
+    : thisWeekSessions ? 100 : 0
+
+  const formatResponseTime = (mins: number) => {
+    if (mins <= 0) return 'N/A'
+    if (mins < 1) return `${Math.round(mins * 60)}s`
+    if (mins >= 60) return `${Math.round(mins / 60 * 10) / 10}h`
+    return `${mins}m`
+  }
+
   const statCards = [
     {
       title: 'Total Conversations',
       value: data.totalSessions.toLocaleString(),
       change: data.sessionsChange,
       icon: Users,
-      description: 'all time',
+      description: 'vs prev. week',
     },
     {
       title: 'Total Messages',
       value: data.totalMessages.toLocaleString(),
       change: data.messagesChange,
       icon: MessageSquare,
-      description: 'all time',
+      description: 'vs prev. week',
     },
     {
       title: 'Avg Response Time',
-      value: data.avgResponseTime > 0 ? `${data.avgResponseTime}m` : 'N/A',
+      value: formatResponseTime(data.avgResponseTime),
       change: 0,
       icon: Clock,
       description: 'last 30 days',
@@ -111,10 +124,10 @@ export default function AnalyticsPage() {
     },
     {
       title: 'This Week',
-      value: (data.dailyData.slice(-7).reduce((sum, d) => sum + d.sessions, 0)).toLocaleString(),
-      change: data.sessionsChange,
+      value: thisWeekSessions.toLocaleString(),
+      change: thisWeekChange,
       icon: TrendingUp,
-      description: 'last 7 days',
+      description: 'vs prev. week',
     },
   ]
 
@@ -168,7 +181,7 @@ export default function AnalyticsPage() {
                     0%
                   </span>
                 )}
-                <span className="text-muted-foreground">vs prev. {stat.description}</span>
+                <span className="text-muted-foreground">{stat.description}</span>
               </div>
             </CardContent>
           </Card>
