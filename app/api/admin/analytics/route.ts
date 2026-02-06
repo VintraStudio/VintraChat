@@ -10,86 +10,99 @@ export async function GET() {
     }
 
     const adminId = user.id
-
-    // Get total sessions
-    const { count: totalSessions } = await supabase
-      .from('chat_sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-
-    // Get total messages
-    const { count: totalMessages } = await supabase
-      .from('chat_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-
-    // Current period (last 7 days)
     const now = new Date()
     const sevenDaysAgo = new Date(now)
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7)
-
-    // Previous period (7-14 days ago)
     const fourteenDaysAgo = new Date(now)
     fourteenDaysAgo.setDate(fourteenDaysAgo.getDate() - 14)
-
-    // Current period sessions
-    const { count: currentPeriodSessions } = await supabase
-      .from('chat_sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-      .gte('created_at', sevenDaysAgo.toISOString())
-
-    // Previous period sessions
-    const { count: previousPeriodSessions } = await supabase
-      .from('chat_sessions')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-      .gte('created_at', fourteenDaysAgo.toISOString())
-      .lt('created_at', sevenDaysAgo.toISOString())
-
-    // Current period messages
-    const { count: currentPeriodMessages } = await supabase
-      .from('chat_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-      .gte('created_at', sevenDaysAgo.toISOString())
-
-    // Previous period messages
-    const { count: previousPeriodMessages } = await supabase
-      .from('chat_messages')
-      .select('*', { count: 'exact', head: true })
-      .eq('admin_id', adminId)
-      .gte('created_at', fourteenDaysAgo.toISOString())
-      .lt('created_at', sevenDaysAgo.toISOString())
-
-    // Calculate percentage changes
-    const sessionsChange = previousPeriodSessions
-      ? Math.round(((currentPeriodSessions || 0) - previousPeriodSessions) / previousPeriodSessions * 100)
-      : currentPeriodSessions ? 100 : 0
-
-    const messagesChange = previousPeriodMessages
-      ? Math.round(((currentPeriodMessages || 0) - previousPeriodMessages) / previousPeriodMessages * 100)
-      : currentPeriodMessages ? 100 : 0
-
-    // Daily data for last 30 days
     const thirtyDaysAgo = new Date(now)
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-    const { data: dailySessions } = await supabase
-      .from('chat_sessions')
-      .select('created_at')
-      .eq('admin_id', adminId)
-      .gte('created_at', thirtyDaysAgo.toISOString())
-      .order('created_at', { ascending: true })
+    // Run all count queries in parallel
+    const [
+      totalSessionsRes,
+      totalMessagesRes,
+      currentSessionsRes,
+      previousSessionsRes,
+      currentMessagesRes,
+      previousMessagesRes,
+      dailySessionsRes,
+      dailyMessagesRes,
+      allMessagesRes,
+      sessionsWithMetaRes,
+    ] = await Promise.all([
+      supabase
+        .from('chat_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId),
+      supabase
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId),
+      supabase
+        .from('chat_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId)
+        .gte('created_at', sevenDaysAgo.toISOString()),
+      supabase
+        .from('chat_sessions')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId)
+        .gte('created_at', fourteenDaysAgo.toISOString())
+        .lt('created_at', sevenDaysAgo.toISOString()),
+      supabase
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId)
+        .gte('created_at', sevenDaysAgo.toISOString()),
+      supabase
+        .from('chat_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('admin_id', adminId)
+        .gte('created_at', fourteenDaysAgo.toISOString())
+        .lt('created_at', sevenDaysAgo.toISOString()),
+      supabase
+        .from('chat_sessions')
+        .select('created_at')
+        .eq('admin_id', adminId)
+        .gte('created_at', thirtyDaysAgo.toISOString())
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('chat_messages')
+        .select('created_at')
+        .eq('admin_id', adminId)
+        .gte('created_at', thirtyDaysAgo.toISOString())
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('chat_messages')
+        .select('session_id, sender_type, created_at')
+        .eq('admin_id', adminId)
+        .gte('created_at', thirtyDaysAgo.toISOString())
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('chat_sessions')
+        .select('metadata')
+        .eq('admin_id', adminId)
+        .not('metadata', 'is', null),
+    ])
 
-    const { data: dailyMessages } = await supabase
-      .from('chat_messages')
-      .select('created_at')
-      .eq('admin_id', adminId)
-      .gte('created_at', thirtyDaysAgo.toISOString())
-      .order('created_at', { ascending: true })
+    const totalSessions = totalSessionsRes.count || 0
+    const totalMessages = totalMessagesRes.count || 0
+    const currentPeriodSessions = currentSessionsRes.count || 0
+    const previousPeriodSessions = previousSessionsRes.count || 0
+    const currentPeriodMessages = currentMessagesRes.count || 0
+    const previousPeriodMessages = previousMessagesRes.count || 0
 
-    // Group by day
+    // Calculate percentage changes
+    const sessionsChange = previousPeriodSessions
+      ? Math.round((currentPeriodSessions - previousPeriodSessions) / previousPeriodSessions * 100)
+      : currentPeriodSessions ? 100 : 0
+
+    const messagesChange = previousPeriodMessages
+      ? Math.round((currentPeriodMessages - previousPeriodMessages) / previousPeriodMessages * 100)
+      : currentPeriodMessages ? 100 : 0
+
+    // Group daily data by day
     const dailyData: Record<string, { sessions: number; messages: number }> = {}
     for (let i = 29; i >= 0; i--) {
       const d = new Date(now)
@@ -98,12 +111,15 @@ export async function GET() {
       dailyData[key] = { sessions: 0, messages: 0 }
     }
 
-    dailySessions?.forEach(s => {
+    const dailySessions = dailySessionsRes.data || []
+    const dailyMessages = dailyMessagesRes.data || []
+
+    dailySessions.forEach(s => {
       const key = new Date(s.created_at).toISOString().split('T')[0]
       if (dailyData[key]) dailyData[key].sessions++
     })
 
-    dailyMessages?.forEach(m => {
+    dailyMessages.forEach(m => {
       const key = new Date(m.created_at).toISOString().split('T')[0]
       if (dailyData[key]) dailyData[key].messages++
     })
@@ -114,62 +130,38 @@ export async function GET() {
       messages: data.messages,
     }))
 
-    // Avg response time - calculate from real data
-    // Find admin responses and the visitor message before them
-    const { data: allMessages } = await supabase
-      .from('chat_messages')
-      .select('session_id, sender_type, created_at')
-      .eq('admin_id', adminId)
-      .gte('created_at', thirtyDaysAgo.toISOString())
-      .order('created_at', { ascending: true })
-
+    // Calculate response time metrics (avg + distribution in one pass)
+    const allMessages = allMessagesRes.data || []
     let totalResponseTime = 0
     let responseCount = 0
+    const responseTimeBuckets = { under1: 0, under5: 0, under30: 0, over30: 0 }
 
-    if (allMessages) {
-      // Group messages by session
-      const sessionMessages: Record<string, typeof allMessages> = {}
-      allMessages.forEach(m => {
-        if (!sessionMessages[m.session_id]) sessionMessages[m.session_id] = []
-        sessionMessages[m.session_id].push(m)
-      })
+    // Group messages by session
+    const sessionMessages: Record<string, typeof allMessages> = {}
+    allMessages.forEach(m => {
+      if (!sessionMessages[m.session_id]) sessionMessages[m.session_id] = []
+      sessionMessages[m.session_id].push(m)
+    })
 
-      // For each session, find admin responses after visitor messages
-      Object.values(sessionMessages).forEach(msgs => {
-        for (let i = 1; i < msgs.length; i++) {
-          if (msgs[i].sender_type === 'admin' && msgs[i - 1].sender_type === 'visitor') {
-            const diff = new Date(msgs[i].created_at).getTime() - new Date(msgs[i - 1].created_at).getTime()
-            totalResponseTime += diff
-            responseCount++
-          }
+    // Single pass: compute both avg and distribution
+    Object.values(sessionMessages).forEach(msgs => {
+      for (let i = 1; i < msgs.length; i++) {
+        if (msgs[i].sender_type === 'admin' && msgs[i - 1].sender_type === 'visitor') {
+          const diffMs = new Date(msgs[i].created_at).getTime() - new Date(msgs[i - 1].created_at).getTime()
+          totalResponseTime += diffMs
+          responseCount++
+
+          const diffMin = diffMs / 60000
+          if (diffMin < 1) responseTimeBuckets.under1++
+          else if (diffMin < 5) responseTimeBuckets.under5++
+          else if (diffMin < 30) responseTimeBuckets.under30++
+          else responseTimeBuckets.over30++
         }
-      })
-    }
+      }
+    })
 
     const avgResponseTimeMs = responseCount > 0 ? totalResponseTime / responseCount : 0
     const avgResponseTimeMin = Math.round(avgResponseTimeMs / 60000 * 10) / 10
-
-    // Response time distribution
-    const responseTimeBuckets = { under1: 0, under5: 0, under30: 0, over30: 0 }
-    if (allMessages) {
-      const sessionMessages: Record<string, typeof allMessages> = {}
-      allMessages.forEach(m => {
-        if (!sessionMessages[m.session_id]) sessionMessages[m.session_id] = []
-        sessionMessages[m.session_id].push(m)
-      })
-
-      Object.values(sessionMessages).forEach(msgs => {
-        for (let i = 1; i < msgs.length; i++) {
-          if (msgs[i].sender_type === 'admin' && msgs[i - 1].sender_type === 'visitor') {
-            const diffMin = (new Date(msgs[i].created_at).getTime() - new Date(msgs[i - 1].created_at).getTime()) / 60000
-            if (diffMin < 1) responseTimeBuckets.under1++
-            else if (diffMin < 5) responseTimeBuckets.under5++
-            else if (diffMin < 30) responseTimeBuckets.under30++
-            else responseTimeBuckets.over30++
-          }
-        }
-      })
-    }
 
     const totalResponses = responseTimeBuckets.under1 + responseTimeBuckets.under5 + responseTimeBuckets.under30 + responseTimeBuckets.over30
     const responseTimeDistribution = totalResponses > 0 ? [
@@ -184,11 +176,11 @@ export async function GET() {
       { label: 'Over 30 mins', value: 0 },
     ]
 
-    // Peak hours from analytics_events or sessions
+    // Peak hours from session data
     const hourBuckets: Record<number, number> = {}
     for (let h = 0; h < 24; h++) hourBuckets[h] = 0
 
-    dailySessions?.forEach(s => {
+    dailySessions.forEach(s => {
       const hour = new Date(s.created_at).getHours()
       hourBuckets[hour]++
     })
@@ -213,14 +205,9 @@ export async function GET() {
     }
 
     // Page referrers from session metadata
-    const { data: sessionsWithMeta } = await supabase
-      .from('chat_sessions')
-      .select('metadata')
-      .eq('admin_id', adminId)
-      .not('metadata', 'is', null)
-
+    const sessionsWithMeta = sessionsWithMetaRes.data || []
     const pageCounts: Record<string, number> = {}
-    sessionsWithMeta?.forEach(s => {
+    sessionsWithMeta.forEach(s => {
       const meta = s.metadata as Record<string, string> | null
       const referrer = meta?.referrer
       if (referrer) {
@@ -245,8 +232,8 @@ export async function GET() {
       }))
 
     return NextResponse.json({
-      totalSessions: totalSessions || 0,
-      totalMessages: totalMessages || 0,
+      totalSessions,
+      totalMessages,
       sessionsChange,
       messagesChange,
       avgResponseTime: avgResponseTimeMin,

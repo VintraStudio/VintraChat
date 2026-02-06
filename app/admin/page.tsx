@@ -200,7 +200,7 @@ export default function AdminDashboard() {
       value: stats.recentSessions,
       icon: TrendingUp,
       change: stats.sessionsChange,
-      description: 'last 7 days',
+      description: 'vs prev. week',
     },
   ]
 
