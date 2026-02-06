@@ -1,22 +1,50 @@
-import { createPublicClient } from '@/lib/supabase/public'
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
 import { NextRequest, NextResponse } from 'next/server'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type',
 }
 
+function json(data: unknown, status = 200) {
+  return NextResponse.json(data, { status, headers: corsHeaders })
+}
+
+function getSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return createSupabaseClient(url, key, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
+}
+
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: corsHeaders })
+}
+
 export async function POST(request: NextRequest) {
+  let body: { chatbot_id?: string; visitor_name?: string; visitor_email?: string }
+
   try {
-    const { chatbot_id, visitor_name, visitor_email } = await request.json()
+    body = await request.json()
+  } catch {
+    return json({ error: 'Invalid JSON body' }, 400)
+  }
 
-    if (!chatbot_id) {
-      return NextResponse.json({ error: 'Missing chatbot_id' }, { status: 400, headers: corsHeaders })
-    }
+  const { chatbot_id, visitor_name, visitor_email } = body
 
-    const supabase = createPublicClient()
+  if (!chatbot_id) {
+    return json({ error: 'Missing chatbot_id' }, 400)
+  }
 
+  const supabase = getSupabase()
+  if (!supabase) {
+    return json({ error: 'Server configuration error' }, 500)
+  }
+
+  try {
     // Get the admin_id from the chatbot config
     const { data: config, error: configError } = await supabase
       .from('chatbot_configs')
@@ -25,7 +53,7 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (configError || !config) {
-      return NextResponse.json({ error: 'Chatbot not found' }, { status: 404, headers: corsHeaders })
+      return json({ error: 'Chatbot not found', detail: configError?.message }, 404)
     }
 
     // Generate a unique visitor ID
@@ -50,25 +78,24 @@ export async function POST(request: NextRequest) {
       .single()
 
     if (sessionError) {
-      return NextResponse.json({ error: 'Failed to create session', detail: sessionError.message }, { status: 500, headers: corsHeaders })
+      return json({ error: 'Failed to create session', detail: sessionError.message }, 500)
     }
 
     // Log analytics event (non-blocking)
-    supabase.from('analytics_events').insert({
-      admin_id: config.admin_id,
-      chatbot_id,
-      session_id: session.id,
-      event_type: 'session_started',
-      event_data: { visitor_name, visitor_email },
-    }).then(() => {}).catch(() => {})
+    supabase
+      .from('analytics_events')
+      .insert({
+        admin_id: config.admin_id,
+        chatbot_id,
+        session_id: session.id,
+        event_type: 'session_started',
+        event_data: { visitor_name, visitor_email },
+      })
+      .then(() => {})
+      .catch(() => {})
 
-    return NextResponse.json({ session_id: session.id }, { headers: corsHeaders })
-  } catch (error) {
-    console.error('Session API error:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500, headers: corsHeaders })
+    return json({ session_id: session.id })
+  } catch (err) {
+    return json({ error: 'Internal server error', detail: String(err) }, 500)
   }
-}
-
-export async function OPTIONS() {
-  return new NextResponse(null, { headers: corsHeaders })
 }
