@@ -3,6 +3,14 @@ const nextConfig = {
   typescript: {
     ignoreBuildErrors: true,
   },
+  allowedDevOrigins: [
+    'https://*.replit.dev',
+    'https://*.repl.co',
+    'https://*.kirk.replit.dev',
+    'http://127.0.0.1',
+    'http://127.0.0.1:5000',
+    `https://${process.env.REPLIT_DEV_DOMAIN || ''}`,
+  ],
   images: {
     unoptimized: true,
   },
